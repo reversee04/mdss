@@ -36,10 +36,10 @@ export async function syncToMDSS(){
         })
 
         // send this data to MDSS
-
+        const facility = await prisma.facility.findFirst();
         await axios.post('http://192.168.56.1:3000/api/sync', {
 
-            sourceHospital: prisma.facility.fields.name,
+            sourceHospital: facility?.name,
 
             patients,
             encounters,

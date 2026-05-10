@@ -4,6 +4,7 @@ import { normalizePatient} from '@/transformers/patientTransformer';
 export async function processSync(payload: any){
     
     const{
+    syncLog,
     sourceHospital,
     patients = [],
     encounters = [],
@@ -12,9 +13,10 @@ export async function processSync(payload: any){
 
     // save raw patients
     for (const patient of patients) {
-        const rawPatient = await prisma.RawPatient.create({
+        await prisma.rawPatient.create({
             data:{
-                sourceHospital,
+                syncLogId: syncLog,
+                sourceHospitalCode: sourceHospital,
                 externalId: patient.id,
                 payload: patient
             },
@@ -24,7 +26,7 @@ export async function processSync(payload: any){
         const normalizedPatient = normalizePatient(patient);
 
         // save canonical
-        await prisma.MDSSPatient.upsert({
+        await prisma.mDSSPatient.upsert({
             where:{
                 patientHash: normalizedPatient.patientHash
             },

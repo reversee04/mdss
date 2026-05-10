@@ -47,8 +47,9 @@
 // =============================================================================
 
 generator client {
-  provider        = "prisma-client-js"
+  provider        = "prisma-client"
   previewFeatures = ["multiSchema"]
+  output = "../generated"
 }
 
 datasource db {
