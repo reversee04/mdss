@@ -1,0 +1,1107 @@
+// =============================================================================
+// MDSS — Medical Disease Surveillance System
+// Prisma Schema — Production Architecture
+//
+// This schema implements a three-layer PostgreSQL architecture for the MDSS
+// platform. It is NOT a hospital EMR. It is a surveillance, analytics, and
+// outbreak detection platform that ingests data from multiple hospital systems.
+//
+// LAYER OVERVIEW:
+//
+//   raw        → Stores untouched incoming payloads from each hospital's API.
+//                Acts as a landing zone, audit trail, and replay buffer.
+//
+//   canonical  → Standardised, de-identified, unified representation of all
+//                clinical events across hospitals. The source of truth for all
+//                surveillance logic and downstream analytics.
+//
+//   analytics  → Precomputed aggregations and summary tables. Designed for
+//                dashboards, charting, geospatial heatmaps, and alerting.
+//                Populated by scheduled ETL jobs — never written to directly.
+//
+// TRANSFORMATION FLOW:
+//
+//   Hospital API
+//     ↓  (HTTP pull / webhook push)
+//   raw.RawSyncLog          ← Audit record for every ingest job
+//   raw.RawPatient          ← Raw patient payload (JSON, untouched)
+//   raw.RawEncounter        ← Raw encounter payload
+//   raw.RawDiagnosis        ← Raw diagnosis payload
+//   raw.RawLabResult        ← Raw lab result payload
+//   raw.RawTreatment        ← Raw treatment payload
+//     ↓  (ETL Canonicaliser — runs after each sync)
+//   canonical.MDSSFacility  ← Normalised facility registry
+//   canonical.MDSSPatient   ← De-identified patient stub (hash only)
+//   canonical.MDSSCase      ← One case per disease-encounter pairing
+//   canonical.MDSSLabResult ← Standardised lab evidence
+//   canonical.MDSSTreatment ← Standardised treatment record
+//   canonical.MDSSOutcome   ← Final case outcome
+//     ↓  (Analytics Job — runs nightly or on-demand)
+//   analytics.DailyDiseaseSummary     ← Case counts by disease/date/facility
+//   analytics.DistrictDiseaseTrend    ← Rolling trends at district level
+//   analytics.FacilityPerformanceMetrics ← TSR, CFR, LOS per facility
+//   analytics.OutbreakAlert           ← Threshold-based alert records
+//   analytics.MortalityStatistics     ← CFR breakdowns
+//   analytics.TreatmentSuccessRates   ← TSR by protocol/disease/region
+//
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["raw", "canonical", "analytics"]
+}
+
+// =============================================================================
+// SHARED ENUMS
+// =============================================================================
+
+// Sourced from the hospital schema. Kept in MDSS for validation at ingest time.
+enum RawEncounterType {
+  OUTPATIENT
+  INPATIENT
+  EMERGENCY
+  FOLLOW_UP
+  REFERRAL
+  UNKNOWN
+
+  @@schema("raw")
+}
+
+enum RawEncounterStatus {
+  ACTIVE
+  DISCHARGED
+  TRANSFERRED
+  DECEASED
+  ABSCONDED
+  UNKNOWN
+
+  @@schema("raw")
+}
+
+// Canonical enums — normalised across all hospital source systems.
+enum CaseSeverity {
+  MILD
+  MODERATE
+  SEVERE
+  CRITICAL
+  UNKNOWN
+
+  @@schema("canonical")
+}
+
+enum CaseStatus {
+  ACTIVE
+  CLOSED
+  LOST_TO_FOLLOW_UP
+  TRANSFERRED
+
+  @@schema("canonical")
+}
+
+enum LabConfirmationStatus {
+  PENDING
+  CONFIRMED_POSITIVE
+  CONFIRMED_NEGATIVE
+  INDETERMINATE
+  NOT_TESTED
+
+  @@schema("canonical")
+}
+
+enum OutcomeResult {
+  RECOVERED
+  IMPROVED
+  UNCHANGED
+  DETERIORATED
+  DECEASED
+  TRANSFERRED
+  LOST_TO_FOLLOW_UP
+
+  @@schema("canonical")
+}
+
+enum TreatmentStatus {
+  ONGOING
+  COMPLETED
+  DISCONTINUED
+  FAILED
+
+  @@schema("canonical")
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_POSITIVE
+
+  @@schema("analytics")
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@schema("analytics")
+}
+
+// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// RAW LAYER
+// ─────────────────────────────────────────────────────────────────────────────
+// Purpose:
+//   Store every payload received from hospital APIs exactly as received.
+//   No transformation. No validation enforcement beyond existence.
+//   This layer is the audit trail and the replay source.
+//
+// Key design decisions:
+//   - payload is Json — preserves the exact hospital API response shape
+//   - sourceHospitalCode ties records to their originating facility
+//   - externalId preserves the hospital's own primary key for deduplication
+//   - processedAt tracks when ETL picked this record up for canonicalisation
+//   - processingError captures transformation failures without data loss
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// RawSyncLog
+// Tracks every ingest job (one record per API pull or push event).
+// This is the outermost audit record — all other raw records link back here.
+// -----------------------------------------------------------------------------
+model RawSyncLog {
+  id                 String    @id @default(uuid())
+  /// Unique code identifying the source hospital (e.g. "KCH-001")
+  sourceHospitalCode String
+  /// Which hospital API endpoint was called (e.g. "/api/encounters")
+  endpoint           String
+  /// HTTP method used: GET | POST | WEBHOOK
+  method             String    @default("GET")
+  /// Query parameters sent in the request (date range, last sync cursor, etc.)
+  queryParams        Json?
+  /// Number of records returned in the response
+  recordsReturned    Int?
+  /// Cursor/timestamp used for incremental sync — stored for next run
+  syncCursor         DateTime?
+  syncStartedAt      DateTime  @default(now())
+  syncCompletedAt    DateTime?
+  success            Boolean   @default(false)
+  httpStatusCode     Int?
+  errorMessage       String?
+  /// MDSS subsystem that initiated this sync (e.g. "etl-ingestor-v2")
+  initiatedBy        String?
+  createdAt          DateTime  @default(now())
+
+  rawPatients    RawPatient[]
+  rawEncounters  RawEncounter[]
+  rawDiagnoses   RawDiagnosis[]
+  rawLabResults  RawLabResult[]
+  rawTreatments  RawTreatment[]
+
+  @@index([sourceHospitalCode])
+  @@index([syncStartedAt])
+  @@index([success])
+  @@map("raw_sync_logs")
+  @@schema("raw")
+}
+
+// -----------------------------------------------------------------------------
+// RawPatient
+// One record per patient payload received from a hospital.
+// PII is preserved here (in payload) for reprocessing; access must be
+// restricted to ETL service accounts only. Analysts never touch this layer.
+// -----------------------------------------------------------------------------
+model RawPatient {
+  id                 String    @id @default(uuid())
+  syncLogId          String
+  /// The hospital's own patient UUID/ID, preserved for deduplication
+  externalId         String
+  sourceHospitalCode String
+  /// Complete raw API response for this patient — schema varies by hospital
+  payload            Json
+  receivedAt         DateTime  @default(now())
+  /// Timestamp when the ETL canonicaliser processed this record
+  processedAt        DateTime?
+  /// If canonicalisation failed, the error is stored here (record stays raw)
+  processingError    String?
+  createdAt          DateTime  @default(now())
+
+  syncLog RawSyncLog @relation(fields: [syncLogId], references: [id])
+
+  @@unique([sourceHospitalCode, externalId])
+  @@index([sourceHospitalCode])
+  @@index([processedAt])
+  @@index([receivedAt])
+  @@map("raw_patients")
+  @@schema("raw")
+}
+
+// -----------------------------------------------------------------------------
+// RawEncounter
+// One record per patient encounter payload received from a hospital.
+// Encounters are the primary unit of clinical activity in the source system.
+// -----------------------------------------------------------------------------
+model RawEncounter {
+  id                 String    @id @default(uuid())
+  syncLogId          String
+  externalId         String
+  externalPatientId  String
+  sourceHospitalCode String
+  encounterType      RawEncounterType   @default(UNKNOWN)
+  encounterStatus    RawEncounterStatus @default(UNKNOWN)
+  /// Full encounter payload — includes ward, clinician, dates, notes
+  payload            Json
+  receivedAt         DateTime  @default(now())
+  processedAt        DateTime?
+  processingError    String?
+  createdAt          DateTime  @default(now())
+
+  syncLog RawSyncLog @relation(fields: [syncLogId], references: [id])
+
+  @@unique([sourceHospitalCode, externalId])
+  @@index([sourceHospitalCode])
+  @@index([externalPatientId])
+  @@index([processedAt])
+  @@map("raw_encounters")
+  @@schema("raw")
+}
+
+// -----------------------------------------------------------------------------
+// RawDiagnosis
+// One record per diagnosis payload. Multiple diagnoses may arrive per encounter
+// (primary + comorbidities). ETL selects the primary diagnosis for MDSSCase.
+// -----------------------------------------------------------------------------
+model RawDiagnosis {
+  id                  String    @id @default(uuid())
+  syncLogId           String
+  externalId          String
+  externalEncounterId String
+  sourceHospitalCode  String
+  /// ICD-10 code or local disease code, extracted from payload for fast indexing
+  diseaseCode         String?
+  payload             Json
+  receivedAt          DateTime  @default(now())
+  processedAt         DateTime?
+  processingError     String?
+  createdAt           DateTime  @default(now())
+
+  syncLog RawSyncLog @relation(fields: [syncLogId], references: [id])
+
+  @@unique([sourceHospitalCode, externalId])
+  @@index([sourceHospitalCode])
+  @@index([diseaseCode])
+  @@index([processedAt])
+  @@map("raw_diagnoses")
+  @@schema("raw")
+}
+
+// -----------------------------------------------------------------------------
+// RawLabResult
+// One record per lab result payload. Includes the isPositive flag extracted
+// from the payload to allow fast surveillance queries before canonicalisation.
+// -----------------------------------------------------------------------------
+model RawLabResult {
+  id                  String    @id @default(uuid())
+  syncLogId           String
+  externalId          String
+  externalEncounterId String
+  sourceHospitalCode  String
+  /// Test code extracted for indexing (LOINC or local code)
+  testCode            String?
+  /// Fast-access positive flag extracted from payload
+  isPositive          Boolean?
+  payload             Json
+  receivedAt          DateTime  @default(now())
+  processedAt         DateTime?
+  processingError     String?
+  createdAt           DateTime  @default(now())
+
+  syncLog RawSyncLog @relation(fields: [syncLogId], references: [id])
+
+  @@unique([sourceHospitalCode, externalId])
+  @@index([sourceHospitalCode])
+  @@index([testCode])
+  @@index([processedAt])
+  @@map("raw_lab_results")
+  @@schema("raw")
+}
+
+// -----------------------------------------------------------------------------
+// RawTreatment
+// One record per treatment payload. Protocol codes are extracted for fast
+// lookup. Full clinical detail lives in payload.
+// -----------------------------------------------------------------------------
+model RawTreatment {
+  id                  String    @id @default(uuid())
+  syncLogId           String
+  externalId          String
+  externalEncounterId String
+  sourceHospitalCode  String
+  /// Protocol code extracted for indexing (e.g. "TB-CAT1")
+  protocolCode        String?
+  payload             Json
+  receivedAt          DateTime  @default(now())
+  processedAt         DateTime?
+  processingError     String?
+  createdAt           DateTime  @default(now())
+
+  syncLog RawSyncLog @relation(fields: [syncLogId], references: [id])
+
+  @@unique([sourceHospitalCode, externalId])
+  @@index([sourceHospitalCode])
+  @@index([protocolCode])
+  @@index([processedAt])
+  @@map("raw_treatments")
+  @@schema("raw")
+}
+
+// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// CANONICAL LAYER
+// ─────────────────────────────────────────────────────────────────────────────
+// Purpose:
+//   A single, unified, de-identified clinical representation across all
+//   hospitals. Analysts, epidemiologists, and the analytics ETL jobs consume
+//   ONLY this layer — they never read the raw layer.
+//
+// Key design decisions:
+//   - MDSSPatient has NO PII. It is identified only by a patientHash
+//     (SHA-256 of a stable national identifier like HPN), which allows
+//     cross-facility case linking without exposing identity.
+//   - MDSSCase is the core epidemiological unit: one case per unique
+//     disease-encounter combination, across any facility.
+//   - MDSSFacility is the MDSS registry of hospitals — separate from the
+//     hospital's own Facility record. It adds surveillance metadata.
+//   - All records carry rawSourceId references so ETL can trace back to the
+//     raw payload without joining across schemas in production.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// MDSSFacility
+// The MDSS-managed registry of all reporting facilities.
+// Separate from the hospital's own Facility model — this adds surveillance
+// metadata (reporting tier, catchment population) and supports facilities
+// that may not run the hospital schema at all (e.g. health posts using paper).
+// -----------------------------------------------------------------------------
+model MDSSFacility {
+  id               String   @id @default(uuid())
+  /// Canonical code used across MDSS (may map to hospital's facilityCode)
+  facilityCode     String   @unique
+  name             String
+  /// HMIS classification: Hospital | District Hospital | Health Centre | Clinic | Health Post
+  facilityType     String
+  ownershipType    String   @default("Public") // Public | Mission | Private
+  /// Administrative hierarchy for geographic aggregation
+  village          String?
+  traditionalAuthority String?
+  district         String
+  region           String   // Northern | Central | Southern (Malawi context)
+  country          String   @default("Malawi")
+  latitude         Float?
+  longitude        Float?
+  /// Estimated population in the catchment area — used for incidence rate calculation
+  catchmentPopulation Int?
+  /// Which tier this facility reports to (1 = central, 3 = community)
+  reportingTier    Int      @default(2)
+  isActive         Boolean  @default(true)
+  isReporting      Boolean  @default(true)
+  firstReportedAt  DateTime?
+  lastReportedAt   DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  cases        MDSSCase[]
+  labResults   MDSSLabResult[]
+  treatments   MDSSTreatment[]
+  outcomes     MDSSOutcome[]
+
+  @@index([district])
+  @@index([region])
+  @@map("mdss_facilities")
+  @@schema("canonical")
+}
+
+// -----------------------------------------------------------------------------
+// MDSSPatient
+// A de-identified patient stub. No name, no phone, no address below district.
+// The patientHash is a one-way hash (SHA-256) of the patient's primary
+// national identifier (HPN preferred, then NID, then passport).
+// This allows:
+//   - Cross-facility case linkage (same person, multiple hospitals)
+//   - Longitudinal disease tracking
+//   - Re-admission detection
+//   - Without ever storing PII in the analytics-accessible layer
+//
+// Age and sex are retained for epidemiological stratification.
+// District/region are retained for geographic aggregation.
+// -----------------------------------------------------------------------------
+model MDSSPatient {
+  id                String   @id @default(uuid())
+  /// SHA-256 hash of the patient's primary national identifier
+  patientHash       String   @unique
+  /// Approximate age band — NOT exact DOB. Derived by ETL at ingest time.
+  ageBand           String?  // e.g. "0-4", "5-14", "15-24", "25-34", "35-49", "50+"
+  /// Year of birth only — not full date — to limit re-identification risk
+  birthYear         Int?
+  sex               String?  // MALE | FEMALE | OTHER | UNKNOWN
+  /// District of residence (from patient address, not facility location)
+  residenceDistrict String?
+  residenceRegion   String?
+  residenceCountry  String   @default("Malawi")
+  /// Source hospital code where the patient was first seen
+  firstSeenAt       String?
+  firstEncounterDate DateTime?
+  lastEncounterDate  DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  cases MDSSCase[]
+
+  @@index([ageBand])
+  @@index([residenceDistrict])
+  @@index([residenceRegion])
+  @@map("mdss_patients")
+  @@schema("canonical")
+}
+
+// -----------------------------------------------------------------------------
+// MDSSDiseaseRegistry
+// MDSS-managed catalogue of notifiable and tracked diseases.
+// Maps hospital-local disease names/codes to canonical ICD-10 codes.
+// Supports aliasing: "Malaria (Plasmodium falciparum)" → ICD-10 B50.9
+// -----------------------------------------------------------------------------
+model MDSSDiseaseRegistry {
+  id                String   @id @default(uuid())
+  /// ICD-10 code — the canonical identifier across MDSS
+  icd10Code         String   @unique
+  /// Short name used in dashboards and alerts
+  displayName       String
+  /// Full ICD-10 description
+  fullName          String?
+  /// Disease classification: Communicable | Vector-borne | Water-borne | Respiratory | NCD | Other
+  category          String
+  /// Surveillance tier: NOTIFIABLE means MoH/PHIM must be alerted within 24h
+  isNotifiable      Boolean  @default(false)
+  /// Epidemic-prone diseases trigger outbreak detection algorithms
+  isEpidemicProne   Boolean  @default(false)
+  isTrackedByMDSS   Boolean  @default(true)
+  /// Hospital-local aliases that ETL should map to this canonical code
+  localAliases      String[] // e.g. ["Malaria", "Malaria (PF)", "MAL"]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  cases MDSSCase[]
+
+  @@index([category])
+  @@index([isNotifiable])
+  @@map("mdss_disease_registry")
+  @@schema("canonical")
+}
+
+// -----------------------------------------------------------------------------
+// MDSSCase
+// The central epidemiological record in MDSS. One case per disease per
+// encounter. Multiple cases can exist per patient (different diseases,
+// different admissions). This is the primary input for surveillance queries.
+//
+// The case deliberately avoids clinical detail — it captures:
+//   - Who (de-identified patient hash)
+//   - What disease
+//   - Where (facility → district → region)
+//   - When (onset, report, close dates)
+//   - Severity and status
+//   - Lab confirmation status
+//   - Whether the case ended in death (for CFR)
+//
+// All clinical detail (treatments, labs) hangs off this record.
+// -----------------------------------------------------------------------------
+model MDSSCase {
+  id                 String    @id @default(uuid())
+  patientId          String
+  facilityId         String
+  diseaseId          String
+  /// Raw encounter ID for traceability back to the raw layer
+  rawEncounterId     String?
+  rawSourceHospital  String?
+
+  /// Date symptoms first appeared (may differ from admission date)
+  onsetDate          DateTime?
+  /// Date the case was first reported to MDSS
+  reportDate         DateTime  @default(now())
+  /// Date the encounter was opened at the facility
+  admissionDate      DateTime?
+  /// Date the case was closed (discharge, death, lost to follow-up)
+  closedDate         DateTime?
+
+  encounterType      String?   // OUTPATIENT | INPATIENT | EMERGENCY
+  severity           CaseSeverity @default(UNKNOWN)
+  status             CaseStatus   @default(ACTIVE)
+  labConfirmation    LabConfirmationStatus @default(NOT_TESTED)
+
+  /// Whether this case resulted in death — primary driver of CFR computation
+  isDeath            Boolean   @default(false)
+  /// ICD-10 cause of death code if isDeath = true
+  causeOfDeathCode   String?
+  /// Length of stay in days, pre-computed at case close
+  lengthOfStayDays   Int?
+  /// Whether patient was readmitted within 30 days for the same disease
+  isReadmission      Boolean   @default(false)
+  readmittedWithin30Days Boolean @default(false)
+
+  /// Geographic fields denormalised here for analytics query performance.
+  /// These reflect the patient's district of residence, NOT the facility location.
+  patientDistrict    String?
+  patientRegion      String?
+
+  /// Facility location fields — denormalised for heatmap queries
+  facilityDistrict   String?
+  facilityRegion     String?
+  facilityLatitude   Float?
+  facilityLongitude  Float?
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  patient    MDSSPatient         @relation(fields: [patientId], references: [id])
+  facility   MDSSFacility        @relation(fields: [facilityId], references: [id])
+  disease    MDSSDiseaseRegistry @relation(fields: [diseaseId], references: [id])
+
+  labResults MDSSLabResult[]
+  treatments MDSSTreatment[]
+  outcome    MDSSOutcome?
+
+  @@index([diseaseId])
+  @@index([facilityId])
+  @@index([patientId])
+  @@index([reportDate])
+  @@index([onsetDate])
+  @@index([status])
+  @@index([facilityDistrict])
+  @@index([facilityRegion])
+  @@index([patientDistrict])
+  @@index([isDeath])
+  @@map("mdss_cases")
+  @@schema("canonical")
+}
+
+// -----------------------------------------------------------------------------
+// MDSSLabResult
+// Standardised lab result tied to a case. Maps hospital-local test names
+// to LOINC codes where possible. The critical field for surveillance is
+// isPositive — it drives the LabConfirmationStatus on MDSSCase.
+// -----------------------------------------------------------------------------
+model MDSSLabResult {
+  id                 String   @id @default(uuid())
+  caseId             String
+  facilityId         String
+  rawLabResultId     String?  // Link back to raw.RawLabResult for traceability
+
+  /// LOINC code — canonical test identifier. Null if no LOINC mapping found.
+  loincCode          String?
+  /// Display name normalised by ETL (e.g. "Malaria RDT" not "Mal. Rapid Test")
+  testName           String
+  sampleType         String?  // Blood | Sputum | Urine | Stool | CSF
+  orderedAt          DateTime?
+  collectedAt        DateTime?
+  resultedAt         DateTime?
+  /// Normalised result value (numeric or category)
+  resultValue        String?
+  resultUnit         String?
+  /// Simplified positive/negative flag — primary surveillance signal
+  isPositive         Boolean?
+  confirmationStatus LabConfirmationStatus @default(PENDING)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  case     MDSSCase     @relation(fields: [caseId], references: [id])
+  facility MDSSFacility @relation(fields: [facilityId], references: [id])
+
+  @@index([caseId])
+  @@index([loincCode])
+  @@index([resultedAt])
+  @@index([isPositive])
+  @@map("mdss_lab_results")
+  @@schema("canonical")
+}
+
+// -----------------------------------------------------------------------------
+// MDSSTreatment
+// Standardised treatment record. Maps hospital-local protocol codes to the
+// MDSS canonical protocol registry. Used for TSR computation.
+// -----------------------------------------------------------------------------
+model MDSSTreatment {
+  id                 String          @id @default(uuid())
+  caseId             String
+  facilityId         String
+  rawTreatmentId     String?         // Link back to raw.RawTreatment
+
+  /// Canonical protocol code in MDSS (e.g. "TB-CAT1", "MALARIA-AL3")
+  canonicalProtocolCode String?
+  /// Normalised drug/treatment name
+  treatmentName      String
+  startDate          DateTime?
+  endDate            DateTime?
+  durationDays       Int?
+  status             TreatmentStatus @default(ONGOING)
+  discontinuedReason String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  case     MDSSCase     @relation(fields: [caseId], references: [id])
+  facility MDSSFacility @relation(fields: [facilityId], references: [id])
+
+  @@index([caseId])
+  @@index([canonicalProtocolCode])
+  @@index([status])
+  @@map("mdss_treatments")
+  @@schema("canonical")
+}
+
+// -----------------------------------------------------------------------------
+// MDSSOutcome
+// Final recorded outcome for a case. One-to-one with MDSSCase.
+// This is the definitive record for CFR and TSR calculations.
+// The analytics layer reads this to compute DailyDiseaseSummary, MortalityStatistics,
+// and TreatmentSuccessRates.
+// -----------------------------------------------------------------------------
+model MDSSOutcome {
+  id               String        @id @default(uuid())
+  caseId           String        @unique
+  facilityId       String
+  rawOutcomeId     String?       // Link back to raw.RawEncounter (outcome fields)
+
+  result           OutcomeResult
+  recordedAt       DateTime      @default(now())
+  lengthOfStayDays Int?
+  wasReadmission   Boolean       @default(false)
+  /// True if this outcome is a treatment success (RECOVERED or IMPROVED)
+  isTreatmentSuccess Boolean     @default(false)
+  /// ICD-10 cause of death — populated only when result = DECEASED
+  causeOfDeathCode String?
+  causeOfDeathName String?
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  case     MDSSCase     @relation(fields: [caseId], references: [id])
+  facility MDSSFacility @relation(fields: [facilityId], references: [id])
+
+  @@index([result])
+  @@index([recordedAt])
+  @@index([isTreatmentSuccess])
+  @@map("mdss_outcomes")
+  @@schema("canonical")
+}
+
+// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// ANALYTICS LAYER
+// ─────────────────────────────────────────────────────────────────────────────
+// Purpose:
+//   Precomputed aggregation tables that power dashboards, charts, alerts,
+//   and reports. These tables are NEVER written to by application code.
+//   They are populated exclusively by scheduled ETL/analytics jobs that read
+//   from the canonical layer.
+//
+// Key design decisions:
+//   - All metrics are pre-aggregated — no joins needed at query time.
+//   - Time-series tables use a `date` column (not DateTime) for efficient
+//     range queries and dashboard rendering.
+//   - computedAt tracks when the record was last refreshed — stale rows
+//     can be detected and flagged in monitoring.
+//   - All tables include facilityCode, district, and region in denormalised
+//     form for fast filtering without joins.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// DailyDiseaseSummary
+// Precomputed case counts per disease per facility per day.
+// The foundational time-series table. Powers:
+//   - disease trend line charts
+//   - daily case count dashboards
+//   - facility-level surveillance views
+//   - national/regional rollup queries
+//
+// One row = one disease × one facility × one calendar date.
+// Rebuilt nightly by the analytics ETL job.
+// -----------------------------------------------------------------------------
+model DailyDiseaseSummary {
+  id                  String   @id @default(uuid())
+  summaryDate         DateTime @db.Date
+  /// ICD-10 code of the disease
+  icd10Code           String
+  diseaseDisplayName  String
+  diseaseCategory     String
+  facilityCode        String
+  facilityName        String
+  facilityType        String
+  district            String
+  region              String
+  country             String   @default("Malawi")
+
+  /// New cases reported on this date
+  newCases            Int      @default(0)
+  /// Total active cases as of end of this date
+  activeCases         Int      @default(0)
+  /// Cases closed/discharged on this date
+  closedCases         Int      @default(0)
+  /// Deaths recorded on this date
+  deaths              Int      @default(0)
+  /// Suspected (unconfirmed) cases
+  suspectedCases      Int      @default(0)
+  /// Lab-confirmed cases
+  confirmedCases      Int      @default(0)
+  /// Inpatient subset of new cases
+  inpatientCases      Int      @default(0)
+  /// Outpatient subset of new cases
+  outpatientCases     Int      @default(0)
+
+  /// When the analytics job that produced this row ran
+  computedAt          DateTime @default(now())
+  /// Version of the analytics job — supports re-runs with version tracking
+  jobVersion          String?
+
+  @@unique([summaryDate, icd10Code, facilityCode])
+  @@index([summaryDate])
+  @@index([icd10Code])
+  @@index([district])
+  @@index([region])
+  @@index([facilityCode])
+  @@map("daily_disease_summary")
+  @@schema("analytics")
+}
+
+// -----------------------------------------------------------------------------
+// DistrictDiseaseTrend
+// Rolling aggregate at district level across all facilities.
+// Powers:
+//   - district heatmaps
+//   - geographic hotspot detection
+//   - inter-district comparison charts
+//   - incidence rate maps (using catchmentPopulation)
+//
+// One row = one disease × one district × one calendar date.
+// -----------------------------------------------------------------------------
+model DistrictDiseaseTrend {
+  id                  String   @id @default(uuid())
+  trendDate           DateTime @db.Date
+  icd10Code           String
+  diseaseDisplayName  String
+  district            String
+  region              String
+  country             String   @default("Malawi")
+
+  /// Reporting facility count on this date for this disease in this district
+  reportingFacilities Int      @default(0)
+  newCases            Int      @default(0)
+  activeCases         Int      @default(0)
+  deaths              Int      @default(0)
+  confirmedCases      Int      @default(0)
+  suspectedCases      Int      @default(0)
+
+  /// Estimated catchment population — used for incidence rate per 100,000
+  catchmentPopulation Int?
+  /// Incidence rate per 100,000 population, pre-calculated
+  incidenceRatePer100k Float?
+
+  /// 7-day rolling average new cases — pre-computed for trend charts
+  rollingAvg7Day     Float?
+  /// 4-week rolling average
+  rollingAvg28Day    Float?
+
+  computedAt          DateTime @default(now())
+  jobVersion          String?
+
+  @@unique([trendDate, icd10Code, district])
+  @@index([trendDate])
+  @@index([icd10Code])
+  @@index([district])
+  @@index([region])
+  @@map("district_disease_trends")
+  @@schema("analytics")
+}
+
+// -----------------------------------------------------------------------------
+// FacilityPerformanceMetrics
+// Monthly performance summary per facility.
+// Powers:
+//   - facility-level reporting dashboards
+//   - MoH performance review reports
+//   - league tables comparing facilities
+//   - catchment coverage analysis
+//
+// One row = one facility × one calendar month.
+// Metrics are computed across ALL diseases tracked by MDSS.
+// -----------------------------------------------------------------------------
+model FacilityPerformanceMetrics {
+  id                   String   @id @default(uuid())
+  /// Year-month of the reporting period (stored as first day of month)
+  reportingMonth       DateTime @db.Date
+  facilityCode         String
+  facilityName         String
+  facilityType         String
+  district             String
+  region               String
+
+  /// Total cases reported by this facility in the month
+  totalCasesReported   Int      @default(0)
+  totalDeaths          Int      @default(0)
+  totalRecovered       Int      @default(0)
+  totalLabTests        Int      @default(0)
+  totalLabPositive     Int      @default(0)
+
+  /// Case Fatality Rate = deaths / totalCasesReported (as percentage)
+  caseFatalityRate     Float?
+  /// Treatment Success Rate = recovered / closed cases with treatment (as percentage)
+  treatmentSuccessRate Float?
+  /// Average length of stay for inpatient cases
+  avgLengthOfStayDays  Float?
+  /// Proportion of cases that were lab-confirmed
+  labConfirmationRate  Float?
+  /// Proportion of cases that resulted in 30-day readmission
+  readmissionRate      Float?
+
+  /// Number of distinct diseases reported this month
+  diseasesReported     Int      @default(0)
+  /// Whether this facility submitted complete data for the period
+  isCompleteReport     Boolean  @default(false)
+  /// Data completeness score 0–100
+  completenessScore    Float?
+
+  computedAt           DateTime @default(now())
+  jobVersion           String?
+
+  @@unique([reportingMonth, facilityCode])
+  @@index([reportingMonth])
+  @@index([facilityCode])
+  @@index([district])
+  @@index([region])
+  @@map("facility_performance_metrics")
+  @@schema("analytics")
+}
+
+// -----------------------------------------------------------------------------
+// OutbreakAlert
+// Generated when a disease case count crosses a predefined epidemiological
+// threshold in a given area within a time window. This is the primary
+// outbreak detection output.
+//
+// Thresholds are maintained externally (in config or a separate admin table).
+// The analytics job writes here when a threshold is breached.
+// MDSS operators resolve or dismiss alerts via the surveillance dashboard.
+// -----------------------------------------------------------------------------
+model OutbreakAlert {
+  id                  String        @id @default(uuid())
+  /// ICD-10 code of the disease that triggered the alert
+  icd10Code           String
+  diseaseDisplayName  String
+  /// Geographic scope of the alert
+  district            String?
+  region              String?
+  facilityCode        String?
+
+  status              AlertStatus   @default(OPEN)
+  severity            AlertSeverity @default(MEDIUM)
+
+  /// Date range the alert covers
+  periodStart         DateTime
+  periodEnd           DateTime
+
+  /// Case count that triggered the alert
+  observedCases       Int
+  /// Threshold value that was breached
+  alertThreshold      Int
+  /// Expected baseline count for this period (if a baseline exists)
+  expectedBaseline    Float?
+  /// How many standard deviations above baseline (for statistical alerts)
+  sigmaDeviation      Float?
+
+  alertGeneratedAt    DateTime      @default(now())
+  acknowledgedAt      DateTime?
+  acknowledgedBy      String?       // MDSS user ID who acknowledged
+  resolvedAt          DateTime?
+  resolvedBy          String?
+  resolutionNotes     String?
+
+  /// Algorithm that generated this alert (e.g. "fixed_threshold", "zscore_v2")
+  detectionAlgorithm  String?
+  jobVersion          String?
+
+  @@index([icd10Code])
+  @@index([status])
+  @@index([severity])
+  @@index([district])
+  @@index([alertGeneratedAt])
+  @@map("outbreak_alerts")
+  @@schema("analytics")
+}
+
+// -----------------------------------------------------------------------------
+// MortalityStatistics
+// Monthly mortality breakdown by disease, facility, age band, and sex.
+// Powers:
+//   - CFR dashboards broken down by demographic strata
+//   - Cause-of-death analysis
+//   - Age-sex pyramids overlaid with disease mortality
+//   - National and regional mortality reports
+//
+// One row = one disease × one facility × one month × one age band × one sex.
+// Fine-grained to support demographic stratification without runtime aggregation.
+// -----------------------------------------------------------------------------
+model MortalityStatistics {
+  id                   String   @id @default(uuid())
+  reportingMonth       DateTime @db.Date
+  icd10Code            String
+  diseaseDisplayName   String
+  facilityCode         String
+  facilityName         String
+  district             String
+  region               String
+
+  /// Demographic strata
+  ageBand              String?  // "0-4" | "5-14" | "15-24" | "25-34" | "35-49" | "50+"
+  sex                  String?  // MALE | FEMALE | OTHER | UNKNOWN
+
+  totalCases           Int      @default(0)
+  totalDeaths          Int      @default(0)
+  /// CFR = totalDeaths / totalCases — pre-calculated as percentage
+  caseFatalityRate     Float?
+
+  computedAt           DateTime @default(now())
+  jobVersion           String?
+
+  @@unique([reportingMonth, icd10Code, facilityCode, ageBand, sex])
+  @@index([reportingMonth])
+  @@index([icd10Code])
+  @@index([district])
+  @@index([ageBand])
+  @@map("mortality_statistics")
+  @@schema("analytics")
+}
+
+// -----------------------------------------------------------------------------
+// TreatmentSuccessRates
+// Monthly TSR breakdown per disease, facility, and protocol.
+// Powers:
+//   - Protocol effectiveness dashboards
+//   - Cross-facility TSR comparison
+//   - Treatment guideline adherence monitoring
+//   - National TSR reports for MoH
+//
+// One row = one disease × one protocol × one facility × one month.
+// -----------------------------------------------------------------------------
+model TreatmentSuccessRates {
+  id                   String   @id @default(uuid())
+  reportingMonth       DateTime @db.Date
+  icd10Code            String
+  diseaseDisplayName   String
+  /// Canonical MDSS protocol code (e.g. "TB-CAT1", "MALARIA-AL3")
+  protocolCode         String?
+  protocolName         String?
+  facilityCode         String
+  facilityName         String
+  district             String
+  region               String
+
+  totalTreated         Int      @default(0)
+  treatmentSuccesses   Int      @default(0)
+  treatmentFailures    Int      @default(0)
+  discontinued         Int      @default(0)
+  lostToFollowUp       Int      @default(0)
+
+  /// TSR = treatmentSuccesses / totalTreated — pre-calculated as percentage
+  treatmentSuccessRate Float?
+  /// Average treatment duration for completed cases
+  avgTreatmentDays     Float?
+
+  computedAt           DateTime @default(now())
+  jobVersion           String?
+
+  @@unique([reportingMonth, icd10Code, protocolCode, facilityCode])
+  @@index([reportingMonth])
+  @@index([icd10Code])
+  @@index([protocolCode])
+  @@index([facilityCode])
+  @@index([district])
+  @@map("treatment_success_rates")
+  @@schema("analytics")
+}
+
+// =============================================================================
+// END OF SCHEMA
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// ETL FLOW SUMMARY
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// PHASE 1 — INGEST (runs per hospital, per sync interval, e.g. every 15 min)
+//   1. Query hospital API for new/updated records since last syncCursor
+//   2. Write RawSyncLog (status: in-progress)
+//   3. Upsert Raw* records (use sourceHospitalCode + externalId as unique key)
+//   4. Update RawSyncLog (status: success/failed, syncCursor: latest timestamp)
+//
+// PHASE 2 — CANONICALISE (runs after each successful ingest, or on schedule)
+//   1. Query raw.Raw* WHERE processedAt IS NULL
+//   2. For each RawPatient:
+//      a. Hash the primary identifier (HPN > NID > PASSPORT > HOSPITAL_ID)
+//      b. Upsert canonical.MDSSPatient (no PII written)
+//   3. For each RawEncounter:
+//      a. Map encounterType, encounterStatus to canonical enums
+//      b. Resolve facility → MDSSFacility (by sourceHospitalCode)
+//      c. Resolve disease from RawDiagnosis → MDSSDiseaseRegistry (ICD-10 map)
+//      d. Upsert canonical.MDSSCase
+//   4. For each RawLabResult:
+//      a. Map testCode → LOINC code (via lookup table)
+//      b. Upsert canonical.MDSSLabResult
+//      c. Update MDSSCase.labConfirmation if isPositive = true
+//   5. For each RawTreatment:
+//      a. Map protocolCode → canonical protocol
+//      b. Upsert canonical.MDSSTreatment
+//   6. For each closed RawEncounter:
+//      a. Upsert canonical.MDSSOutcome
+//      b. Update MDSSCase.isDeath, closedDate, status
+//   7. Mark raw records as processedAt = now()
+//
+// PHASE 3 — ANALYTICS (runs nightly, or triggered post-canonicalise)
+//   1. Recompute analytics.DailyDiseaseSummary for the past N days
+//   2. Recompute analytics.DistrictDiseaseTrend with rolling averages
+//   3. Recompute analytics.FacilityPerformanceMetrics for current month
+//   4. Evaluate analytics.OutbreakAlert thresholds — insert new alerts
+//   5. Recompute analytics.MortalityStatistics for current month
+//   6. Recompute analytics.TreatmentSuccessRates for current month
+//   7. Log job completion (jobVersion, computedAt) on each table
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// INCREMENTAL SYNC STRATEGY
+// ─────────────────────────────────────────────────────────────────────────────
+//   - RawSyncLog.syncCursor stores the last successful sync timestamp
+//   - Hospital APIs are queried with: updatedAt > syncCursor
+//   - ETL uses UPSERT (ON CONFLICT DO UPDATE) throughout
+//   - Raw records with processingError are retried on next ETL run
+//   - Canonical records carry rawSourceId for traceability and re-derivation
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// SECURITY & ACCESS CONTROL
+// ─────────────────────────────────────────────────────────────────────────────
+//   - raw schema: ETL service account ONLY. Never exposed to analysts.
+//   - canonical schema: Read access for epidemiologists and surveillance tools.
+//   - analytics schema: Read access for dashboards, reports, and public APIs.
+//   - PII (names, contacts, addresses) is NEVER written to canonical or analytics.
+//   - patientHash is a non-reversible one-way hash — PII cannot be recovered.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// SCALING RECOMMENDATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+//   - Partition DailyDiseaseSummary and DistrictDiseaseTrend by summaryDate
+//     (range partitioning) once data volume grows beyond 2 years.
+//   - Add a TimescaleDB hypertable for DistrictDiseaseTrend for time-series ops.
+//   - Use pg_cron or Temporal.io for ETL job scheduling.
+//   - Deploy raw schema on a write-optimised instance if ingest volume is high.
+//   - Use read replicas for analytics schema to isolate dashboard query load.
+// =============================================================================

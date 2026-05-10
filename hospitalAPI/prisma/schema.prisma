@@ -1,0 +1,482 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// MDSS — Hospital Mock Simulation Database
+// Prisma Schema
+//
+// This database simulates the source hospital information systems that MDSS
+// consumes via mock REST APIs. It models the raw patient-level data as it
+// would exist in a real hospital EMR/HIS before ETL into MDSS.
+//
+// Each hospital in the simulation runs its own isolated instance of this
+// schema (multi-tenant by deployment, not by column).
+// =============================================================================
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum Sex {
+  MALE
+  FEMALE
+  OTHER
+  UNKNOWN
+}
+
+enum EncounterType {
+  OUTPATIENT
+  INPATIENT
+  EMERGENCY
+  FOLLOW_UP
+  REFERRAL
+}
+
+enum EncounterStatus {
+  ACTIVE
+  DISCHARGED
+  TRANSFERRED
+  DECEASED
+  ABSCONDED
+}
+
+enum DiagnosisStatus {
+  CONFIRMED
+  SUSPECTED
+  RULED_OUT
+}
+
+enum TreatmentStatus {
+  ONGOING
+  COMPLETED
+  DISCONTINUED
+  FAILED
+}
+
+enum OutcomeResult {
+  RECOVERED
+  IMPROVED
+  UNCHANGED
+  DETERIORATED
+  DECEASED
+  TRANSFERRED
+  LOST_TO_FOLLOW_UP
+}
+
+enum IdentifierType {
+  HPN   // Health Passport Number — primary Malawi national health ID
+  NID   // National ID (Malawi National Registration Bureau)
+  PASSPORT
+  HOSPITAL_ID // Facility-assigned fallback
+}
+
+enum SampleStatus {
+  PENDING
+  COLLECTED
+  PROCESSING
+  RESULTED
+  CANCELLED
+}
+
+// =============================================================================
+// FACILITY
+// Models the hospital or clinic itself. One record per simulated facility.
+// =============================================================================
+
+model Facility {
+  id             String   @id @default(uuid())
+  facilityCode   String   @unique          // e.g. "KCH-001" (Kamuzu Central Hospital)
+  name           String
+  type           String                    // Hospital | District Hospital | Health Centre | Clinic
+  district       String
+  region         String                    // Northern | Central | Southern
+  latitude       Float?
+  longitude      Float?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  wards          Ward[]
+  staff          Staff[]
+  encounters     PatientEncounter[]
+
+  @@map("facilities")
+}
+
+// =============================================================================
+// WARD
+// Physical or logical unit within a facility (e.g. Male Medical, Paediatric).
+// =============================================================================
+
+model Ward {
+  id           String   @id @default(uuid())
+  facilityId   String
+  name         String                       // e.g. "TB Ward", "Cholera Treatment Unit"
+  specialty    String?                      // e.g. "Infectious Disease", "General Medicine"
+  bedCapacity  Int?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  facility     Facility           @relation(fields: [facilityId], references: [id])
+  encounters   PatientEncounter[]
+
+  @@map("wards")
+}
+
+// =============================================================================
+// STAFF
+// Clinicians and nurses attached to a facility. Used for encounter attribution.
+// =============================================================================
+
+model Staff {
+  id           String   @id @default(uuid())
+  facilityId   String
+  staffCode    String   @unique
+  firstName    String
+  lastName     String
+  role         String                       // Doctor | Nurse | Clinical Officer | Lab Technician
+  department   String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  facility           Facility           @relation(fields: [facilityId], references: [id])
+  encounters         PatientEncounter[] @relation("AttendingClinician")
+  diagnoses          Diagnosis[]
+
+  @@map("staff")
+}
+
+// =============================================================================
+// PATIENT
+// Core patient demographic record as stored in the hospital system.
+// PII is stored here — MDSS must de-identify before surfacing to analysts.
+// =============================================================================
+
+model Patient {
+  id               String    @id @default(uuid())
+  dateOfBirth      DateTime?
+  sex              Sex       @default(UNKNOWN)
+  nationality      String?   @default("Malawian")
+
+  // Address fields — used for geographic aggregation in MDSS
+  village          String?
+  traditionalAuthority String?
+  district         String?
+  region           String?
+
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  identifiers      PatientIdentifier[]
+  encounters       PatientEncounter[]
+  contactInfo      PatientContact?
+
+  @@map("patients")
+}
+
+// =============================================================================
+// PATIENT IDENTIFIER
+// A patient can have multiple identifier types across facilities.
+// MDSS uses these to resolve cross-facility identity (HPN → NID → Passport).
+// =============================================================================
+
+model PatientIdentifier {
+  id             String         @id @default(uuid())
+  patientId      String
+  identifierType IdentifierType
+  identifierValue String
+  isPrimary      Boolean        @default(false)
+  isVerified     Boolean        @default(false)
+  issuedBy       String?        // e.g. "Ministry of Health", "NRB"
+  expiresAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  patient        Patient        @relation(fields: [patientId], references: [id])
+
+  @@unique([identifierType, identifierValue])
+  @@index([identifierValue])
+  @@map("patient_identifiers")
+}
+
+// =============================================================================
+// PATIENT CONTACT
+// Separated from Patient to make PII scoping easier during ETL masking.
+// =============================================================================
+
+model PatientContact {
+  id          String   @id @default(uuid())
+  patientId   String   @unique
+  phone       String?
+  altPhone    String?
+  email       String?
+  nextOfKin   String?
+  nokPhone    String?
+  nokRelation String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  patient     Patient  @relation(fields: [patientId], references: [id])
+
+  @@map("patient_contacts")
+}
+
+// =============================================================================
+// DISEASE REFERENCE
+// Controlled vocabulary of diseases tracked by MDSS.
+// Matches the ICD-10 codes used in Diagnoses.
+// =============================================================================
+
+model Disease {
+  id           String   @id @default(uuid())
+  icd10Code    String   @unique        // e.g. "A00" (Cholera), "A15" (TB), "B20" (HIV)
+  name         String                  // e.g. "Cholera", "Tuberculosis"
+  category     String                  // e.g. "Communicable", "Vector-borne"
+  isNotifiable Boolean  @default(false) // Notifiable to MoH/PHIM
+  isTrackedByMDSS Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  diagnoses    Diagnosis[]
+
+  @@map("diseases")
+}
+
+// =============================================================================
+// PATIENT ENCOUNTER
+// A single visit or admission episode. One patient can have many encounters
+// across one or multiple facilities.
+// =============================================================================
+
+model PatientEncounter {
+  id               String          @id @default(uuid())
+  patientId        String
+  facilityId       String
+  wardId           String?
+  attendingStaffId String?
+
+  encounterType    EncounterType   @default(OUTPATIENT)
+  status           EncounterStatus @default(ACTIVE)
+
+  admittedAt       DateTime        @default(now())
+  dischargedAt     DateTime?
+  transferredTo    String?         // Facility name if transferred out
+
+  chiefComplaint   String?
+  notes            String?
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  patient          Patient              @relation(fields: [patientId], references: [id])
+  facility         Facility             @relation(fields: [facilityId], references: [id])
+  ward             Ward?                @relation(fields: [wardId], references: [id])
+  attendingStaff   Staff?               @relation("AttendingClinician", fields: [attendingStaffId], references: [id])
+
+  diagnoses        Diagnosis[]
+  treatments       Treatment[]
+  labResults       LabResult[]
+  vitals           VitalSigns[]
+  outcome          EncounterOutcome?
+
+  @@index([patientId])
+  @@index([facilityId])
+  @@index([admittedAt])
+  @@map("patient_encounters")
+}
+
+// =============================================================================
+// DIAGNOSIS
+// One or more diagnoses per encounter. Primary diagnosis drives MDSS disease
+// aggregation; secondary diagnoses capture comorbidities.
+// =============================================================================
+
+model Diagnosis {
+  id             String          @id @default(uuid())
+  encounterId    String
+  diseaseId      String
+  diagnosedById  String?
+  status         DiagnosisStatus @default(CONFIRMED)
+  isPrimary      Boolean         @default(false)
+  diagnosedAt    DateTime        @default(now())
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  encounter      PatientEncounter @relation(fields: [encounterId], references: [id])
+  disease        Disease          @relation(fields: [diseaseId], references: [id])
+  diagnosedBy    Staff?           @relation(fields: [diagnosedById], references: [id])
+
+  @@index([diseaseId])
+  @@index([diagnosedAt])
+  @@map("diagnoses")
+}
+
+// =============================================================================
+// TREATMENT PROTOCOL REFERENCE
+// Catalogue of standardised treatment regimens. Linked to treatments given.
+// =============================================================================
+
+model TreatmentProtocol {
+  id            String   @id @default(uuid())
+  code          String   @unique         // e.g. "TB-CAT1", "MALARIA-AL3"
+  name          String                   // e.g. "TB Category 1 Regimen"
+  diseaseTarget String                   // Disease name this applies to
+  description   String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  treatments    Treatment[]
+
+  @@map("treatment_protocols")
+}
+
+// =============================================================================
+// TREATMENT
+// Records each treatment administered during an encounter.
+// MDSS uses this table to compute TSR, CFR, recovery time, and readmission.
+// =============================================================================
+
+model Treatment {
+  id              String          @id @default(uuid())
+  encounterId     String
+  protocolId      String?
+  drugName        String?                  // Free-text if no protocol matched
+  dosage          String?
+  route           String?                  // Oral | IV | IM | Topical
+  frequency       String?                  // e.g. "Once daily", "Twice daily"
+  startDate       DateTime        @default(now())
+  endDate         DateTime?
+  durationDays    Int?
+  status          TreatmentStatus @default(ONGOING)
+  discontinuedReason String?
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  encounter       PatientEncounter  @relation(fields: [encounterId], references: [id])
+  protocol        TreatmentProtocol? @relation(fields: [protocolId], references: [id])
+
+  @@index([encounterId])
+  @@index([startDate])
+  @@map("treatments")
+}
+
+// =============================================================================
+// ENCOUNTER OUTCOME
+// Final outcome recorded at discharge. This is the primary input for MDSS
+// treatment effectiveness analysis (TSR, CFR, recovery rate).
+// =============================================================================
+
+model EncounterOutcome {
+  id              String        @id @default(uuid())
+  encounterId     String        @unique
+  result          OutcomeResult
+  recordedAt      DateTime      @default(now())
+  lengthOfStayDays Int?         // Computed: dischargedAt - admittedAt
+  wasReadmission  Boolean       @default(false)
+  readmittedWithin30Days Boolean @default(false)
+  causeOfDeath    String?       // ICD-10 code if result = DECEASED
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  encounter       PatientEncounter @relation(fields: [encounterId], references: [id])
+
+  @@map("encounter_outcomes")
+}
+
+// =============================================================================
+// VITAL SIGNS
+// Periodic observations during an encounter. Not directly consumed by MDSS
+// analytics but available for clinical context and anomaly detection.
+// =============================================================================
+
+model VitalSigns {
+  id              String   @id @default(uuid())
+  encounterId     String
+  recordedAt      DateTime @default(now())
+  temperatureC    Float?
+  systolicBP      Int?
+  diastolicBP     Int?
+  pulseRate       Int?
+  respiratoryRate Int?
+  oxygenSatPct    Float?
+  weightKg        Float?
+  heightCm        Float?
+  createdAt       DateTime @default(now())
+
+  encounter       PatientEncounter @relation(fields: [encounterId], references: [id])
+
+  @@index([encounterId])
+  @@map("vital_signs")
+}
+
+// =============================================================================
+// LAB RESULT
+// Laboratory test results tied to an encounter. Relevant for MDSS to correlate
+// confirmed diagnoses with lab evidence (e.g. malaria RDT, TB GeneXpert).
+// =============================================================================
+
+model LabResult {
+  id              String       @id @default(uuid())
+  encounterId     String
+  testName        String                    // e.g. "Malaria RDT", "TB GeneXpert", "HIV ELISA"
+  testCode        String?                   // LOINC or local code
+  sampleType      String?                   // Blood | Sputum | Urine | Stool
+  status          SampleStatus @default(PENDING)
+  orderedAt       DateTime     @default(now())
+  collectedAt     DateTime?
+  resultedAt      DateTime?
+  resultValue     String?                   // Raw result (numeric or categorical)
+  resultUnit      String?
+  referenceRange  String?
+  isPositive      Boolean?                  // Simplified flag for MDSS disease confirmation
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  encounter       PatientEncounter @relation(fields: [encounterId], references: [id])
+
+  @@index([encounterId])
+  @@index([testCode])
+  @@map("lab_results")
+}
+
+// =============================================================================
+// API SYNC LOG
+// Tracks every time MDSS (or the mock API layer) requests data from this
+// hospital system. Supports ETL audit trail and retry logic on the MDSS side.
+// =============================================================================
+
+model ApiSyncLog {
+  id              String   @id @default(uuid())
+  requestedBy     String                    // MDSS system identifier
+  endpoint        String                    // e.g. "/api/encounters"
+  queryParams     Json?                     // Filters sent (date range, facility, etc.)
+  recordsReturned Int?
+  syncStartedAt   DateTime @default(now())
+  syncCompletedAt DateTime?
+  success         Boolean  @default(false)
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+
+  @@map("api_sync_logs")
+}
