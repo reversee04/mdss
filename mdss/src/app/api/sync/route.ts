@@ -16,10 +16,11 @@ export async function POST(req: Request) {
     // 2. Create the log record (Moved outside the IF block)
     const newLog = await prisma.rawSyncLog.create({
       data: {
-        sourceHospital: body.sourceHospital,
+        // sourceHospital: body.sourceHospital,
         sourceHospitalCode: body.sourceHospital,
-        status: "Processing",
-        startTime: new Date(),
+        // status: "Processing",
+        syncStartedAt: new Date(),
+        endpoint: body.endpoint || "unknown",
       },
     });
 
@@ -30,8 +31,8 @@ export async function POST(req: Request) {
     await prisma.rawSyncLog.update({
       where: { id: newLog.id },
       data: {
-        status: "COMPLETED",
-        endTime: new Date(),
+        success: true,
+        syncCompletedAt: new Date(),
       },
     });
 
