@@ -53,6 +53,17 @@ model Disease {
   disease_name String      @db.VarChar(100)
   description  String?     @db.Text
   encounters   Encounter[]
+
+  // Alert threshold settings
+  outbreak_threshold   Int?            @default(0) // Cases per 100k population
+  warning_threshold    Int?            @default(0) // Cases per 100k population
+  monitoring_enabled   Boolean         @default(true)
+  alert_recipients     String[]        @default([]) // Email addresses for alerts
+  last_alert_sent      DateTime?
+  alert_cooldown_hours Int             @default(24) // Minimum hours between alerts
+  created_at           DateTime        @default(now())
+  updated_at           DateTime        @default(now()) @updatedAt
+  outbreak_alerts      OutbreakAlert[]
 }
 
 model Treatment {
@@ -118,6 +129,31 @@ model Alert {
   created_at      DateTime @default(now())
 
   analysis Analysis @relation(fields: [analysis_id], references: [analysis_id])
+}
+
+model OutbreakAlert {
+  alert_id   String  @id @default(cuid())
+  disease_id String  @db.VarChar(50)
+  disease    Disease @relation(fields: [disease_id], references: [disease_id])
+
+  alert_type  String // 'warning' | 'outbreak' | 'resolved'
+  severity    String // 'low' | 'medium' | 'high' | 'critical'
+  district    String? @db.VarChar(100)
+  region      String? @db.VarChar(100)
+  facility_id String? @db.VarChar(50)
+
+  current_cases   Int
+  threshold_value Int
+  population      Int
+  cases_per_100k  Float
+
+  message         String    @db.Text
+  sent_at         DateTime  @default(now())
+  acknowledged    Boolean   @default(false)
+  acknowledged_by String?   @db.VarChar(50) // User ID
+  acknowledged_at DateTime?
+
+  created_at DateTime @default(now())
 }
 
 model AuditLog {

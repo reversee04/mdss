@@ -1,15 +1,83 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { BarChart, PieChart } from '@/components/dashboard/charts'
 import { FilterPanel } from '@/components/dashboard/filter-panel'
-import { DataTable } from '@/components/dashboard/data-table'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { MapPin } from 'lucide-react'
-import { regionalData, districtHeatmapData } from '@/lib/mock-data'
+import { useAnalytics } from '@/hooks/use-analytics'
+
+interface RegionalData {
+  region: string
+  cases: number
+  percentage: number
+}
+
+interface DistrictData {
+  district: string
+  region: string
+  cases: number
+  severity: 'high' | 'medium' | 'low'
+}
 
 export default function GeographicAnalysisPage() {
+  const { getFacilities, loading, error } = useAnalytics()
+  const [regionalData, setRegionalData] = useState<RegionalData[]>([])
+  const [districtData, setDistrictData] = useState<DistrictData[]>([])
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const response = await getFacilities()
+      if (response?.success && response.data) {
+        // Group by region and calculate totals
+        const regionMap = new Map<string, number>()
+        const districts: DistrictData[] = []
+
+        response.data.forEach((facility: any) => {
+          const current = regionMap.get(facility.region) || 0
+          regionMap.set(facility.region, current + facility.totalEncounters)
+
+          districts.push({
+            district: facility.district,
+            region: facility.region,
+            cases: facility.totalEncounters,
+            severity:
+              facility.totalEncounters > 1000 ? 'high'
+              : facility.totalEncounters > 500 ? 'medium'
+              : 'low',
+          })
+        })
+
+        // Calculate regional data
+        const totalCases = Array.from(regionMap.values()).reduce((a, b) => a + b, 0)
+        const regional: RegionalData[] = Array.from(regionMap.entries()).map(
+          ([region, cases]) => ({
+            region,
+            cases,
+            percentage: totalCases > 0 ? Math.round((cases / totalCases) * 100) : 0,
+          })
+        )
+
+        setRegionalData(regional)
+        setDistrictData(districts.sort((a, b) => b.cases - a.cases))
+      }
+    }
+    fetchData()
+  }, [getFacilities])
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Geographic Analysis</h1>
+          <p className="text-destructive">Error: {error}</p>
+        </div>
+      </div>
+    )
+  }
+
   const totalCases = regionalData.reduce((sum, r) => sum + r.cases, 0)
 
   return (
@@ -39,7 +107,6 @@ export default function GeographicAnalysisPage() {
                 {region.region} Region
               </CardTitle>
               <CardDescription>
-                Population: {(region.population / 1000000).toFixed(1)}M
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -47,14 +114,10 @@ export default function GeographicAnalysisPage() {
                 <div className="flex justify-between items-center">
                   <span className="text-2xl font-bold">{region.cases.toLocaleString()}</span>
                   <Badge variant="outline">
-                    {((region.cases / totalCases) * 100).toFixed(1)}%
+                    {region.percentage}%
                   </Badge>
                 </div>
-                <Progress value={(region.cases / totalCases) * 100} className="h-2" />
-                <div className="flex justify-between text-sm text-muted-foreground">
-                  <span>Deaths: {region.deaths}</span>
-                  <span>CFR: {((region.deaths / region.cases) * 100).toFixed(1)}%</span>
-                </div>
+                <Progress value={region.percentage} className="h-2" />
               </div>
             </CardContent>
           </Card>
@@ -90,70 +153,48 @@ export default function GeographicAnalysisPage() {
           <CardDescription>Cases and severity by district</CardDescription>
         </CardHeader>
         <CardContent>
-          <DataTable
-            data={districtHeatmapData.sort((a, b) => b.cases - a.cases)}
-            columns={[
-              {
-                key: 'district',
-                header: 'District',
-                render: (item) => (
-                  <div className="flex items-center gap-2">
-                    <MapPin className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">{item.district}</span>
-                  </div>
-                ),
-              },
-              {
-                key: 'cases',
-                header: 'Cases',
-                render: (item) => item.cases.toLocaleString(),
-              },
-              {
-                key: 'proportion',
-                header: 'Proportion',
-                render: (item) => {
-                  const maxCases = Math.max(...districtHeatmapData.map((d) => d.cases))
-                  const proportion = (item.cases / maxCases) * 100
-                  return (
-                    <div className="flex items-center gap-3 min-w-[150px]">
-                      <Progress value={proportion} className="h-2 flex-1" />
-                      <span className="text-sm text-muted-foreground w-12">
-                        {proportion.toFixed(0)}%
-                      </span>
-                    </div>
-                  )
-                },
-              },
-              {
-                key: 'severity',
-                header: 'Severity',
-                render: (item) => (
-                  <Badge
-                    variant="outline"
-                    className={
-                      item.severity === 'high'
-                        ? 'bg-red-100 text-red-800 border-red-300'
-                        : item.severity === 'medium'
-                        ? 'bg-amber-100 text-amber-800 border-amber-300'
-                        : 'bg-green-100 text-green-800 border-green-300'
-                    }
-                  >
-                    {item.severity}
-                  </Badge>
-                ),
-              },
-              {
-                key: 'incidence',
-                header: 'Incidence Rate',
-                render: (item) => {
-                  const rate = (item.cases / 100000 * 10).toFixed(1)
-                  return `${rate} per 100k`
-                },
-              },
-            ]}
-            searchPlaceholder="Search districts..."
-            pageSize={10}
-          />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left font-medium p-3">District</th>
+                  <th className="text-center font-medium p-3">Region</th>
+                  <th className="text-center font-medium p-3">Cases</th>
+                  <th className="text-center font-medium p-3">Severity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {districtData.slice(0, 10).map((district) => (
+                  <tr key={district.district} className="border-b hover:bg-muted/50">
+                    <td className="p-3 font-medium">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="h-4 w-4 text-muted-foreground" />
+                        <span>{district.district}</span>
+                      </div>
+                    </td>
+                    <td className="p-3 text-center">{district.region}</td>
+                    <td className="p-3 text-center">
+                      <Badge variant="outline">{district.cases.toLocaleString()}</Badge>
+                    </td>
+                    <td className="p-3 text-center">
+                      <Badge
+                        variant="outline"
+                        className={
+                          district.severity === 'high'
+                            ? 'bg-red-100 text-red-800 border-red-300'
+                            : district.severity === 'medium'
+                            ? 'bg-amber-100 text-amber-800 border-amber-300'
+                            : 'bg-green-100 text-green-800 border-green-300'
+                        }
+                      >
+                        {district.severity}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
 
@@ -165,25 +206,22 @@ export default function GeographicAnalysisPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {districtHeatmapData
-              .sort((a, b) => b.cases - a.cases)
-              .slice(0, 5)
-              .map((district, index) => {
-                const maxCases = districtHeatmapData[0].cases
-                return (
-                  <div key={district.district} className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                      <span className="font-bold text-primary">{index + 1}</span>
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between mb-1">
-                        <span className="font-medium">{district.district}</span>
-                        <span className="text-muted-foreground">{district.cases.toLocaleString()} cases</span>
-                      </div>
-                      <Progress value={(district.cases / maxCases) * 100} className="h-2" />
-                    </div>
+            {districtData.slice(0, 5).map((district, index) => {
+              const maxCases = districtData[0]?.cases || 1
+              return (
+                <div key={district.district} className="flex items-center gap-4">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <span className="font-bold text-primary">{index + 1}</span>
                   </div>
-                )
+                  <div className="flex-1">
+                    <div className="flex justify-between mb-1">
+                      <span className="font-medium">{district.district}</span>
+                      <span className="text-muted-foreground">{district.cases.toLocaleString()} cases</span>
+                    </div>
+                    <Progress value={(district.cases / maxCases) * 100} className="h-2" />
+                  </div>
+                </div>
+              )
               })}
           </div>
         </CardContent>

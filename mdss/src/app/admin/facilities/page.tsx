@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { DataTable } from '@/components/dashboard/data-table'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -23,18 +23,55 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Building2, Plus, MapPin, Activity } from 'lucide-react'
-import { facilities, districts } from '@/lib/mock-data'
-
-const facilitiesWithStatus = facilities.map((f, i) => ({
-  ...f,
-  status: i === 2 ? 'offline' : i === 4 ? 'degraded' : 'online',
-  lastReport: `2024-01-${15 - i} ${10 + i}:${30 - i * 5}`,
-  recordsToday: Math.floor(Math.random() * 200) + 50,
-}))
+import { Building2, Plus, MapPin, Activity, Loader2 } from 'lucide-react'
+import { districts } from '@/lib/mock-data'
 
 export default function FacilityManagementPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [facilitiesData, setFacilitiesData] = useState<any[]>([])
+
+  useEffect(() => {
+    const fetchFacilities = async () => {
+      try {
+        const res = await fetch('/api/analytics/facilities')
+        const json = await res.json()
+        
+        if (json.success && Array.isArray(json.data)) {
+          // Map real data to table format, adding simulated statuses for missing fields
+          const mapped = json.data.map((f: any, i: number) => ({
+            id: f.facilityId,
+            name: f.facilityName,
+            district: f.district,
+            region: f.region,
+            type: f.facilityName.toLowerCase().includes('central') ? 'Central Hospital' : 
+                  f.facilityName.toLowerCase().includes('district') ? 'District Hospital' : 'Health Centre',
+            status: i === 2 ? 'offline' : i === 4 ? 'degraded' : 'online',
+            lastReport: `Recent`,
+            recordsToday: f.totalEncounters,
+          }))
+          setFacilitiesData(mapped)
+        }
+      } catch (error) {
+        console.error("Failed to fetch facilities", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    fetchFacilities()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex h-[80vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading facilities...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -128,7 +165,7 @@ export default function FacilityManagementPage() {
             <Building2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{facilities.length}</div>
+            <div className="text-2xl font-bold">{facilitiesData.length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -137,7 +174,7 @@ export default function FacilityManagementPage() {
             <Activity className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{facilitiesWithStatus.filter((f) => f.status === 'online').length}</div>
+            <div className="text-2xl font-bold">{facilitiesData.filter((f) => f.status === 'online').length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -146,7 +183,7 @@ export default function FacilityManagementPage() {
             <Activity className="h-4 w-4 text-amber-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{facilitiesWithStatus.filter((f) => f.status === 'degraded').length}</div>
+            <div className="text-2xl font-bold">{facilitiesData.filter((f) => f.status === 'degraded').length}</div>
           </CardContent>
         </Card>
         <Card>
@@ -155,7 +192,7 @@ export default function FacilityManagementPage() {
             <Activity className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{facilitiesWithStatus.filter((f) => f.status === 'offline').length}</div>
+            <div className="text-2xl font-bold">{facilitiesData.filter((f) => f.status === 'offline').length}</div>
           </CardContent>
         </Card>
       </div>
@@ -168,7 +205,7 @@ export default function FacilityManagementPage() {
         </CardHeader>
         <CardContent>
           <DataTable
-            data={facilitiesWithStatus}
+            data={facilitiesData}
             columns={[
               {
                 key: 'name',

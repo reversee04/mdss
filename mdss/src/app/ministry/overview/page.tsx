@@ -1,16 +1,92 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { LineChart, BarChart, PieChart } from '@/components/dashboard/charts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Download, TrendingUp, TrendingDown, Users, Building2, Activity } from 'lucide-react'
-import { overviewStats, diseaseStats, regionalData, generateTimeSeriesData } from '@/lib/mock-data'
-
-const timeSeriesData = generateTimeSeriesData(12)
+import { Download, TrendingUp, TrendingDown, Users, Building2, Activity, Loader2 } from 'lucide-react'
 
 export default function NationalOverviewPage() {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [
+          diseasesRes,
+          encountersRes,
+          outcomesRes,
+          trendsRes,
+          facilitiesRes
+        ] = await Promise.all([
+          fetch('/api/analytics/diseases').then(r => r.json()),
+          fetch('/api/analytics/encounters').then(r => r.json()),
+          fetch('/api/analytics/outcomes').then(r => r.json()),
+          fetch('/api/analytics/trends').then(r => r.json()),
+          fetch('/api/analytics/facilities').then(r => r.json())
+        ]);
+
+        setData({
+          diseases: diseasesRes.data,
+          encounters: encountersRes.data,
+          outcomes: outcomesRes.data,
+          trends: trendsRes.data,
+          facilities: facilitiesRes.data,
+        });
+      } catch (error) {
+        console.error("Failed to fetch analytics data", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  if (loading || !data) {
+    return (
+      <div className="flex h-[80vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading national data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Stats mapped from API
+  const totalCases = data.encounters?.totalEncounters || 0;
+  const activeFacilitiesCount = Array.isArray(data.facilities) ? data.facilities.length : 0;
+  const recoveryRate = data.outcomes?.recoveryRate || "0%";
+
+  // Trends mapped
+  const trendsData = data.trends || [];
+  const trendLabels = trendsData.map((t: any) => t.date);
+  const trendCounts = trendsData.map((t: any) => t.count);
+
+  // Regional data built from facilities
+  const regionMap: Record<string, { cases: number, deaths: number, population: number }> = {};
+  if (Array.isArray(data.facilities)) {
+    data.facilities.forEach((f: any) => {
+      const region = f.region || "Unknown";
+      if (!regionMap[region]) regionMap[region] = { cases: 0, deaths: 0, population: Math.floor(Math.random() * 5000000) + 2000000 };
+      regionMap[region].cases += f.totalEncounters;
+      regionMap[region].deaths += Math.floor(f.totalEncounters * 0.02); // Mock 2% CFR
+    });
+  }
+  const regionalData = Object.entries(regionMap).map(([region, d]) => ({ region, ...d }));
+
+  // Disease Stats
+  const topDiseases = data.diseases?.topDiseases || [];
+  const diseaseStats = topDiseases.slice(0, 4).map((d: any) => ({
+    disease: d.disease,
+    cases: d.count,
+    tsr: 85, // Mock TSR
+    cfr: 2.1, // Mock CFR
+  }));
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -43,15 +119,15 @@ export default function NationalOverviewPage() {
         />
         <StatCard
           title="Health Facilities"
-          value={overviewStats.totalFacilities}
+          value={activeFacilitiesCount}
           description="nationwide"
           icon={Building2}
         />
         <StatCard
           title="Total Cases (YTD)"
-          value={overviewStats.totalCases}
-          change="+5.2%"
-          changeType="negative"
+          value={totalCases}
+          change="Live"
+          changeType="neutral"
           description="vs last year"
           icon={Activity}
         />
@@ -65,8 +141,8 @@ export default function NationalOverviewPage() {
         />
         <StatCard
           title="Recovery Rate"
-          value="85.3%"
-          change="+2.1%"
+          value={recoveryRate}
+          change="Live"
           changeType="positive"
           description="vs last year"
           icon={TrendingUp}
@@ -81,7 +157,7 @@ export default function NationalOverviewPage() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-6 md:grid-cols-4">
-            {diseaseStats.map((disease) => (
+            {diseaseStats.map((disease: any) => (
               <div key={disease.disease} className="text-center p-4 rounded-lg bg-muted/50">
                 <h4 className="font-semibold mb-2">{disease.disease}</h4>
                 <p className="text-3xl font-bold mb-1">{disease.cases.toLocaleString()}</p>
@@ -104,18 +180,18 @@ export default function NationalOverviewPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <LineChart
           title="Annual Disease Trends"
-          description="Cases over the last 12 months"
-          labels={timeSeriesData.map((d) => d.month)}
+          description="Cases over the tracked period"
+          labels={trendLabels}
           datasets={[
-            { label: 'Total Cases', data: timeSeriesData.map((d) => d.hiv + d.malaria + d.tb + d.cholera) },
+            { label: 'Total Cases', data: trendCounts },
           ]}
         />
         <BarChart
           title="Cases by Disease"
           description="Current period totals"
-          labels={diseaseStats.map((d) => d.disease)}
+          labels={topDiseases.map((d: any) => d.disease)}
           datasets={[
-            { label: 'Cases', data: diseaseStats.map((d) => d.cases) },
+            { label: 'Cases', data: topDiseases.map((d: any) => d.count) },
           ]}
         />
       </div>

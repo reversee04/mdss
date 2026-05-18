@@ -43,6 +43,7 @@ const adminNav = [
   { title: 'Dashboard', href: '/admin', icon: LayoutDashboard },
   { title: 'ETL Monitoring', href: '/admin/etl', icon: Database },
   { title: 'User Management', href: '/admin/users', icon: Users },
+  { title: 'Thresholds', href: '/admin/disease-thresholds', icon: Users },
   { title: 'Facility Management', href: '/admin/facilities', icon: Building2 },
   { title: 'API Integrations', href: '/admin/integrations', icon: Activity },
   { title: 'Audit Logs', href: '/admin/audit', icon: ClipboardList },

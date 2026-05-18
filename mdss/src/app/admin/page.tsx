@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { DataTable } from '@/components/dashboard/data-table'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,10 +21,51 @@ import {
   Cpu,
   MemoryStick,
   RefreshCw,
+  Loader2,
 } from 'lucide-react'
-import { overviewStats, etlLogs, systemHealth, systemNotifications, apiIntegrations } from '@/lib/mock-data'
+import { etlLogs, systemHealth, systemNotifications, apiIntegrations } from '@/lib/mock-data'
 
 export default function AdminDashboardPage() {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [encountersRes, facilitiesRes] = await Promise.all([
+          fetch('/api/analytics/encounters').then(r => r.json()),
+          fetch('/api/analytics/facilities').then(r => r.json()),
+        ]);
+
+        setData({
+          encounters: encountersRes.data,
+          facilities: facilitiesRes.data,
+        });
+      } catch (error) {
+        console.error("Failed to fetch admin dashboard data", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  if (loading || !data) {
+    return (
+      <div className="flex h-[80vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading system data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const totalRecords = data.encounters?.totalEncounters || 0;
+  const activeFacilitiesCount = Array.isArray(data.facilities) ? data.facilities.length : 0;
+  // Mock total facilities based on the current system, since it's not provided by API
+  const totalFacilities = 892;
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -38,16 +80,16 @@ export default function AdminDashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Records"
-          value={overviewStats.recordsProcessed}
-          change="+12,450"
-          changeType="positive"
-          description="records today"
+          value={totalRecords}
+          change="Live"
+          changeType="neutral"
+          description="from all encounters"
           icon={Database}
         />
         <StatCard
           title="Facilities Reporting"
-          value={`${overviewStats.facilitiesReporting}/${overviewStats.totalFacilities}`}
-          change="95%"
+          value={`${activeFacilitiesCount}/${totalFacilities}`}
+          change={`${totalFacilities > 0 ? ((activeFacilitiesCount/totalFacilities)*100).toFixed(1) : 0}%`}
           changeType="positive"
           description="compliance rate"
           icon={Building2}

@@ -1,15 +1,74 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { BarChart, PieChart } from '@/components/dashboard/charts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Download, MapPin, TrendingUp, TrendingDown, Minus } from 'lucide-react'
-import { regionalData, districtHeatmapData } from '@/lib/mock-data'
+import { Download, MapPin, TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-react'
 
 export default function RegionalAnalysisPage() {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [facilitiesRes] = await Promise.all([
+          fetch('/api/analytics/facilities').then(r => r.json())
+        ]);
+
+        setData({
+          facilities: facilitiesRes.data,
+        });
+      } catch (error) {
+        console.error("Failed to fetch analytics data", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  if (loading || !data) {
+    return (
+      <div className="flex h-[80vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading regional data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Regional data built from facilities
+  const regionMap: Record<string, { cases: number, deaths: number, population: number }> = {};
+  const districtMap: Record<string, { cases: number }> = {};
+
+  if (Array.isArray(data.facilities)) {
+    data.facilities.forEach((f: any) => {
+      const region = f.region || "Unknown";
+      if (!regionMap[region]) regionMap[region] = { cases: 0, deaths: 0, population: Math.floor(Math.random() * 5000000) + 2000000 };
+      regionMap[region].cases += f.totalEncounters;
+      regionMap[region].deaths += Math.floor(f.totalEncounters * 0.02); // Mock 2% CFR
+
+      const district = f.district || "Unknown";
+      if (!districtMap[district]) districtMap[district] = { cases: 0 };
+      districtMap[district].cases += f.totalEncounters;
+    });
+  }
+
+  const regionalData = Object.entries(regionMap).map(([region, d]) => ({ region, ...d }));
+  
+  const districtHeatmapData = Object.entries(districtMap).map(([district, d]) => {
+    let severity = 'low';
+    if (d.cases > 5000) severity = 'high';
+    else if (d.cases > 1500) severity = 'medium';
+    return { district, cases: d.cases, severity };
+  });
+
   const totalCases = regionalData.reduce((sum, r) => sum + r.cases, 0)
 
   return (
@@ -31,8 +90,8 @@ export default function RegionalAnalysisPage() {
       {/* Regional Summary Cards */}
       <div className="grid gap-4 md:grid-cols-3">
         {regionalData.map((region) => {
-          const proportion = ((region.cases / totalCases) * 100).toFixed(1)
-          const cfr = ((region.deaths / region.cases) * 100).toFixed(1)
+          const proportion = totalCases > 0 ? ((region.cases / totalCases) * 100).toFixed(1) : "0.0";
+          const cfr = region.cases > 0 ? ((region.deaths / region.cases) * 100).toFixed(1) : "0.0";
           const incidence = ((region.cases / region.population) * 100000).toFixed(0)
           const trend = Math.random() > 0.5 ? 'up' : Math.random() > 0.5 ? 'down' : 'stable'
           
@@ -180,6 +239,9 @@ export default function RegionalAnalysisPage() {
                   </Badge>
                 </div>
               ))}
+              {districtHeatmapData.filter((d) => d.severity === 'high').length === 0 && (
+                <p className="text-muted-foreground">No high priority districts at this time.</p>
+              )}
           </div>
         </CardContent>
       </Card>

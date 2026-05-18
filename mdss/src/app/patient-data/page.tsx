@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout'
 import { FilterPanel } from '@/components/dashboard/filter-panel'
 import { DataTable } from '@/components/dashboard/data-table'
@@ -27,13 +27,55 @@ import {
   Clock,
   AlertCircle,
 } from 'lucide-react'
-import { patients } from '@/lib/mock-data'
+
+interface Patient {
+  id: string
+  age: number
+  sex: string
+  district: string
+  facility: string
+  disease: string
+  diagnosisDate: string
+  status: string
+  events: Array<{
+    date: string
+    type: string
+    description: string
+  }>
+  anomaly: boolean
+  anomalyReason?: string
+}
 
 export default function PatientDataPage() {
-  const [selectedPatient, setSelectedPatient] = useState<typeof patients[0] | null>(null)
+  const [patients, setPatients] = useState<Patient[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
 
-  const openPatientDetails = (patient: typeof patients[0]) => {
+  useEffect(() => {
+    fetchPatients()
+  }, [])
+
+  const fetchPatients = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/analytics/patients')
+      const result = await response.json()
+
+      if (result.success) {
+        setPatients(result.data)
+      } else {
+        setError(result.error || 'Failed to fetch patient data')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const openPatientDetails = (patient: Patient) => {
     setSelectedPatient(patient)
     setIsDialogOpen(true)
   }
@@ -101,7 +143,7 @@ export default function PatientDataPage() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Records</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{patients.length}</div>
+              <div className="text-2xl font-bold">{loading ? '...' : patients.length}</div>
             </CardContent>
           </Card>
           <Card>
@@ -110,7 +152,7 @@ export default function PatientDataPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {patients.filter((p) => p.status === 'On Treatment').length}
+                {loading ? '...' : patients.filter((p) => p.status === 'On Treatment').length}
               </div>
             </CardContent>
           </Card>
@@ -120,7 +162,7 @@ export default function PatientDataPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">
-                {patients.filter((p) => p.status === 'Recovered').length}
+                {loading ? '...' : patients.filter((p) => p.status === 'Recovered').length}
               </div>
             </CardContent>
           </Card>
@@ -133,7 +175,7 @@ export default function PatientDataPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-amber-600">
-                {patients.filter((p) => p.anomaly).length}
+                {loading ? '...' : patients.filter((p) => p.anomaly).length}
               </div>
             </CardContent>
           </Card>
@@ -146,63 +188,73 @@ export default function PatientDataPage() {
             <CardDescription>De-identified patient data and treatment history</CardDescription>
           </CardHeader>
           <CardContent>
-            <DataTable
-              data={patients}
-              columns={[
-                {
-                  key: 'id',
-                  header: 'Patient ID',
-                  render: (item) => (
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm">{item.id}</span>
-                      {item.anomaly && (
-                        <AlertTriangle className="h-4 w-4 text-amber-500" />
-                      )}
-                    </div>
-                  ),
-                },
-                {
-                  key: 'demographics',
-                  header: 'Demographics',
-                  render: (item) => (
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4 text-muted-foreground" />
-                      <span>{item.age}y, {item.sex}</span>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'disease',
-                  header: 'Disease',
-                  render: (item) => <Badge variant="outline">{item.disease}</Badge>,
-                },
-                {
-                  key: 'facility',
-                  header: 'Facility',
-                  render: (item) => (
-                    <div className="max-w-[200px] truncate" title={item.facility}>
-                      {item.facility}
-                    </div>
-                  ),
-                },
-                { key: 'diagnosisDate', header: 'Diagnosis Date' },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  render: (item) => getStatusBadge(item.status),
-                },
-                {
-                  key: 'actions',
-                  header: '',
-                  render: (item) => (
-                    <Button variant="ghost" size="sm" onClick={() => openPatientDetails(item)}>
-                      View History
-                    </Button>
-                  ),
-                },
-              ]}
-              searchPlaceholder="Search by ID, disease, or facility..."
-            />
+            {error ? (
+              <div className="text-center py-8 text-red-600">
+                Error loading patient data: {error}
+              </div>
+            ) : loading ? (
+              <div className="text-center py-8 text-muted-foreground">
+                Loading patient data...
+              </div>
+            ) : (
+              <DataTable
+                data={patients as unknown as Record<string, unknown>[]}
+                columns={[
+                  {
+                    key: 'id',
+                    header: 'Patient ID',
+                    render: (item) => (
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm">{String(item.id)}</span>
+                        {item.anomaly === true && (
+                          <AlertTriangle className="h-4 w-4 text-amber-500" />
+                        )}
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'demographics',
+                    header: 'Demographics',
+                    render: (item) => (
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        <span>{String(item.age)}y, {String(item.sex)}</span>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'disease',
+                    header: 'Disease',
+                    render: (item) => <Badge variant="outline">{String(item.disease)}</Badge>,
+                  },
+                  {
+                    key: 'facility',
+                    header: 'Facility',
+                    render: (item) => (
+                      <div className="max-w-[200px] truncate" title={String(item.facility)}>
+                        {String(item.facility)}
+                      </div>
+                    ),
+                  },
+                  { key: 'diagnosisDate', header: 'Diagnosis Date' },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    render: (item) => getStatusBadge(String(item.status)),
+                  },
+                  {
+                    key: 'actions',
+                    header: '',
+                    render: (item) => (
+                      <Button variant="ghost" size="sm" onClick={() => openPatientDetails(item as unknown as Patient)}>
+                        View History
+                      </Button>
+                    ),
+                  },
+                ]}
+                searchPlaceholder="Search by ID, disease, or facility..."
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -222,7 +274,7 @@ export default function PatientDataPage() {
                     De-identified record: {selectedPatient.id}
                   </DialogDescription>
                 </DialogHeader>
-                
+
                 <ScrollArea className="max-h-[60vh]">
                   <div className="space-y-6 pr-4">
                     {/* Patient Info */}
