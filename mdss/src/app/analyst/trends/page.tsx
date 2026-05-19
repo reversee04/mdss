@@ -73,12 +73,15 @@ export default function TrendsPage() {
     )
   }
 
-  const chartLabels = trendsData.map((d) => {
+  // Ensure trendsData is always an array
+  const trendsArray = Array.isArray(trendsData) ? trendsData : []
+
+  const chartLabels = trendsArray.map((d) => {
     const date = new Date(d.date)
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   })
 
-  const chartData = trendsData.map((d) => d.count)
+  const chartData = trendsArray.map((d) => d.count)
 
   return (
     <div className="space-y-6">
@@ -152,7 +155,7 @@ export default function TrendsPage() {
             <TabsContent value="monthly" className="space-y-4">
               <LineChart
                 title="Overall Disease Trends"
-                description={`Cases reported over last 30 days (${trendsData.length} days of data)`}
+                description={`Cases reported over last 30 days (${trendsArray.length} days of data)`}
                 labels={chartLabels}
                 datasets={[
                   { label: 'Total Cases', data: chartData, borderColor: '#006cbf' },

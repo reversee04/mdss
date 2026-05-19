@@ -16,8 +16,12 @@ async function getDynamicDiseaseIds(): Promise<string[]> {
     },
     select: {
       disease_id: true,
+      disease_name: true,
     },
   });
+
+  console.log('[getDynamicDiseaseIds] Found diseases:', diseases);
+  console.log('[getDynamicDiseaseIds] Looking for:', focusedDiseases);
 
   return diseases.map((d) => d.disease_id);
 }
@@ -315,11 +319,14 @@ export async function getDiseaseDistribution() {
 export async function getOutcomeAnalytics() {
   const allowedDiseaseIds = await getDynamicDiseaseIds();
   
+  console.log('[getOutcomeAnalytics] Allowed disease IDs:', allowedDiseaseIds);
+
   if (allowedDiseaseIds.length === 0) {
     return {
       recoveryRate: "0%",
       treatmentEffectiveness: {},
       outcomes: [],
+      summaryByDisease: {},
     };
   }
 
@@ -378,6 +385,66 @@ export async function getOutcomeAnalytics() {
     }
   });
 
+  // Get outcomes by disease
+  const outcomesByDisease = await prisma.encounter.groupBy({
+    by: ["disease_id", "outcome"],
+    where: {
+      disease_id: { in: allowedDiseaseIds }
+    },
+    _count: true,
+  });
+
+  // Get disease names
+  const diseases = await prisma.disease.findMany({
+    where: {
+      disease_id: { in: allowedDiseaseIds }
+    },
+    select: {
+      disease_id: true,
+      disease_name: true,
+    },
+  });
+
+  console.log('[getOutcomeAnalytics] Found diseases:', diseases);
+  console.log('[getOutcomeAnalytics] Outcomes by disease:', outcomesByDisease);
+
+  const diseaseMap = Object.fromEntries(
+    diseases.map(d => [d.disease_id, d.disease_name])
+  );
+
+  // Build summary by disease
+  const summaryByDisease: Record<string, any> = {};
+
+  for (const disease of diseases) {
+    const diseaseOutcomes = outcomesByDisease.filter(
+      o => o.disease_id === disease.disease_id
+    );
+
+    const diseaseTotal = diseaseOutcomes.reduce(
+      (sum, o) => sum + o._count,
+      0
+    );
+
+    const diseaseRecovered = diseaseOutcomes.find(
+      o => o.outcome?.toLowerCase() === 'recovered'
+    )?._count || 0;
+
+    const diseaseDeaths = diseaseOutcomes.find(
+      o => o.outcome?.toLowerCase() === 'dead' || o.outcome?.toLowerCase() === 'died'
+    )?._count || 0;
+
+    summaryByDisease[disease.disease_name] = {
+      total: diseaseTotal,
+      recovered: diseaseRecovered,
+      deaths: diseaseDeaths,
+      recoveryRate: diseaseTotal > 0 
+        ? Math.round((diseaseRecovered / diseaseTotal) * 100)
+        : 0,
+    };
+  }
+
+  console.log('[getOutcomeAnalytics] Summary by disease:', summaryByDisease);
+
   return {
     recoveryRate:
       ((recoveryRate / total) * 100).toFixed(2) +
@@ -385,12 +452,13 @@ export async function getOutcomeAnalytics() {
     treatmentEffectiveness:
       effectivenessMap,
     outcomes,
+    summaryByDisease,
   };
 }
 
 /**
- * TREND ANALYSIS
- * Time-series data for charts
+ * TREND ANALYSIS (DISEASE-SPECIFIC)
+ * Time-series data grouped by disease with distinct colors
  */
 export async function getTrendAnalysis() {
   const allowedDiseaseIds = await getDynamicDiseaseIds();
@@ -399,41 +467,36 @@ export async function getTrendAnalysis() {
     return [];
   }
 
-  const encounters =
-    await prisma.encounter.findMany({
-      where: {
-        disease_id: { in: allowedDiseaseIds }
-      },
-      select: {
-        date_of_diagnosis: true,
-      },
-      orderBy: {
-        date_of_diagnosis: "asc",
-      },
-    });
+  const encounters = await prisma.encounter.findMany({
+    where: {
+      disease_id: { in: allowedDiseaseIds }
+    },
+    select: {
+      date_of_diagnosis: true,
+      disease_id: true,
+    },
+    orderBy: {
+      date_of_diagnosis: "asc",
+    },
+  });
 
-  const trends: Record<
-    string,
-    number
-  > = {};
+  // Aggregate trends across all diseases
+  const trendsMap: Record<string, number> = {};
 
   encounters.forEach((encounter) => {
-    const date = new Date(
-      encounter.date_of_diagnosis
-    )
+    const date = new Date(encounter.date_of_diagnosis)
       .toISOString()
       .split("T")[0];
 
-    trends[date] =
-      (trends[date] || 0) + 1;
+    trendsMap[date] = (trendsMap[date] || 0) + 1;
   });
 
-  return Object.entries(trends).map(
-    ([date, count]) => ({
-      date,
-      count,
-    })
-  );
+  // Convert to sorted array
+  const trends = Object.entries(trendsMap)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  return trends;
 }
 
 /**
