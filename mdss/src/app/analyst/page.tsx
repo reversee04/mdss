@@ -47,16 +47,43 @@ export default function AnalystDashboardPage() {
   }
 
   // DISEASE-SPECIFIC TRENDS
-  const trendsData = Array.isArray(data.trends) ? data.trends : [];
-  const diseaseTrendLabels = trendsData.map((d: any) => {
-    const date = new Date(d.date);
+  const trendsData = data.trends || {};
+  
+  // Extract all unique dates from all diseases
+  const allDates = new Set<string>();
+  Object.values(trendsData).forEach((diseaseData: any) => {
+    if (Array.isArray(diseaseData)) {
+      diseaseData.forEach((d: any) => allDates.add(d.date));
+    }
+  });
+  const sortedDates = Array.from(allDates).sort();
+
+  const diseaseTrendLabels = sortedDates.map((d: string) => {
+    const date = new Date(d);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   });
-  
-  const trendDatasets = [{
-    label: 'Combined Cases',
-    data: trendsData.map((d: any) => d.count),
-  }];
+
+  // Color palette for different diseases
+  const diseaseColors: Record<string, string> = {
+    'HIV/AIDS': '#ef4444',
+    'Malaria': '#f97316',
+    'Tuberculosis': '#3b82f6',
+    'Cholera': '#8b5cf6',
+  };
+
+  // Create dataset for each disease with different color
+  const trendDatasets = Object.entries(trendsData).map(([disease, trends]: [string, any]) => {
+    const color = diseaseColors[disease] || '#6366f1';
+    const dataPoints = Array.isArray(trends) ? trends.map((t: any) => t.count) : [];
+    return {
+      label: disease,
+      data: dataPoints,
+      borderColor: color,
+      backgroundColor: color + '33',
+      fill: true,
+      tension: 0.4,
+    };
+  });
 
   // TOP DISEASES BAR CHART
   const topDiseases = data.diseases?.topDiseases || [];

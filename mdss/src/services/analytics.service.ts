@@ -1,27 +1,59 @@
 import { prisma } from "@/lib/prisma"; // adjust path if needed
 import { subYears } from "date-fns";
 
+export interface AnalyticsFilters {
+  disease?: string;
+  location?: string;
+  facility?: string;
+  startDate?: string;
+  endDate?: string;
+  timeRange?: string;
+}
+
+export function buildEncounterFilter(allowedDiseaseIds: string[], filters?: AnalyticsFilters) {
+  const where: any = {
+    disease_id: { in: allowedDiseaseIds }
+  };
+
+  if (filters?.location && filters.location !== 'all') {
+    where.facility = { district: { equals: filters.location, mode: 'insensitive' } };
+  }
+  if (filters?.facility && filters.facility !== 'all') {
+    where.facility_id = filters.facility;
+  }
+  if (filters?.startDate || filters?.endDate) {
+    where.date_of_diagnosis = {};
+    if (filters.startDate) where.date_of_diagnosis.gte = new Date(filters.startDate);
+    if (filters.endDate) where.date_of_diagnosis.lte = new Date(filters.endDate);
+  }
+
+  return where;
+}
+
 /**
  * Helper function: Dynamically fetch disease IDs from database
  * Looks up the 4 focused diseases by name
  */
-async function getDynamicDiseaseIds(): Promise<string[]> {
+async function getDynamicDiseaseIds(filters?: AnalyticsFilters): Promise<string[]> {
   const focusedDiseases = ['HIV/AIDS', 'Malaria', 'Tuberculosis', 'Cholera'];
   
-  const diseases = await prisma.disease.findMany({
-    where: {
-      disease_name: {
-        in: focusedDiseases,
-      },
+  const whereClause: any = {
+    disease_name: {
+      in: focusedDiseases,
     },
+  };
+
+  if (filters?.disease && filters.disease !== 'all') {
+    whereClause.disease_id = filters.disease;
+  }
+
+  const diseases = await prisma.disease.findMany({
+    where: whereClause,
     select: {
       disease_id: true,
       disease_name: true,
     },
   });
-
-  console.log('[getDynamicDiseaseIds] Found diseases:', diseases);
-  console.log('[getDynamicDiseaseIds] Looking for:', focusedDiseases);
 
   return diseases.map((d) => d.disease_id);
 }
@@ -30,8 +62,8 @@ async function getDynamicDiseaseIds(): Promise<string[]> {
  * PATIENT DEMOGRAPHICS
  * Age distribution, gender breakdown, geographic distribution
  */
-export async function getPatientDemographics() {
-  const allowedDiseaseIds = await getDynamicDiseaseIds();
+export async function getPatientDemographics(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
   
   if (allowedDiseaseIds.length === 0) {
     return {
@@ -41,19 +73,17 @@ export async function getPatientDemographics() {
     };
   }
 
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
   const patients = await prisma.patient.findMany({
     where: {
       encounters: {
-        some: {
-          disease_id: { in: allowedDiseaseIds }
-        }
+        some: encounterWhere
       }
     },
     include: {
       encounters: {
-        where: {
-          disease_id: { in: allowedDiseaseIds }
-        },
+        where: encounterWhere,
         include: {
           facility: true,
         },
@@ -89,9 +119,7 @@ export async function getPatientDemographics() {
     by: ["sex"],
     where: {
       encounters: {
-        some: {
-          disease_id: { in: allowedDiseaseIds }
-        }
+        some: encounterWhere
       }
     },
     _count: {
@@ -102,9 +130,7 @@ export async function getPatientDemographics() {
   // Geographic distribution (by district)
   const geographicDistribution = await prisma.encounter.groupBy({
     by: ["facility_id"],
-    where: {
-      disease_id: { in: allowedDiseaseIds }
-    },
+    where: encounterWhere,
     _count: true,
   });
 
@@ -133,8 +159,8 @@ export async function getPatientDemographics() {
  * ENCOUNTER STATS
  * Number of encounters, encounter duration
  */
-export async function getEncounterStats() {
-  const allowedDiseaseIds = await getDynamicDiseaseIds();
+export async function getEncounterStats(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
   
   if (allowedDiseaseIds.length === 0) {
     return {
@@ -144,16 +170,14 @@ export async function getEncounterStats() {
     };
   }
 
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
   const totalEncounters = await prisma.encounter.count({
-    where: {
-      disease_id: { in: allowedDiseaseIds }
-    }
+    where: encounterWhere
   });
 
   const encounters = await prisma.encounter.findMany({
-    where: {
-      disease_id: { in: allowedDiseaseIds }
-    },
+    where: encounterWhere,
     select: {
       admission_date: true,
       discharge_date: true,
@@ -186,9 +210,7 @@ export async function getEncounterStats() {
   // Outcome counts
   const encounterOutcomes = await prisma.encounter.groupBy({
     by: ["outcome"],
-    where: {
-      disease_id: { in: allowedDiseaseIds }
-    },
+    where: encounterWhere,
     _count: true,
   });
 
@@ -203,8 +225,8 @@ export async function getEncounterStats() {
  * DISEASE DISTRIBUTION
  * Top diseases, regional prevalence, seasonal trends
  */
-export async function getDiseaseDistribution() {
-  const allowedDiseaseIds = await getDynamicDiseaseIds();
+export async function getDiseaseDistribution(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
   
   if (allowedDiseaseIds.length === 0) {
     return {
@@ -214,12 +236,12 @@ export async function getDiseaseDistribution() {
     };
   }
 
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
   // Top diseases
   const diseaseCounts = await prisma.encounter.groupBy({
     by: ["disease_id"],
-    where: {
-      disease_id: { in: allowedDiseaseIds }
-    },
+    where: encounterWhere,
     _count: true,
     orderBy: {
       _count: {
@@ -246,9 +268,7 @@ export async function getDiseaseDistribution() {
   // Regional disease prevalence
   const regionalPrevalence =
     await prisma.encounter.findMany({
-      where: {
-        disease_id: { in: allowedDiseaseIds }
-      },
+      where: encounterWhere,
       include: {
         facility: true,
         disease: true,
@@ -276,9 +296,7 @@ export async function getDiseaseDistribution() {
   // Seasonal trends (monthly)
   const seasonalTrends =
     await prisma.encounter.findMany({
-      where: {
-        disease_id: { in: allowedDiseaseIds }
-      },
+      where: encounterWhere,
       select: {
         date_of_diagnosis: true,
         disease: {
@@ -316,8 +334,8 @@ export async function getDiseaseDistribution() {
  * OUTCOME ANALYTICS
  * Recovery rates, treatment effectiveness
  */
-export async function getOutcomeAnalytics() {
-  const allowedDiseaseIds = await getDynamicDiseaseIds();
+export async function getOutcomeAnalytics(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
   
   console.log('[getOutcomeAnalytics] Allowed disease IDs:', allowedDiseaseIds);
 
@@ -330,12 +348,12 @@ export async function getOutcomeAnalytics() {
     };
   }
 
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
   const outcomes =
     await prisma.encounter.groupBy({
       by: ["outcome"],
-      where: {
-        disease_id: { in: allowedDiseaseIds }
-      },
+      where: encounterWhere,
       _count: true,
     });
 
@@ -356,9 +374,7 @@ export async function getOutcomeAnalytics() {
   const treatments =
     await prisma.treatmentRecord.findMany({
       where: {
-        encounter: {
-          disease_id: { in: allowedDiseaseIds }
-        }
+        encounter: encounterWhere
       },
       include: {
         treatment: true,
@@ -388,9 +404,7 @@ export async function getOutcomeAnalytics() {
   // Get outcomes by disease
   const outcomesByDisease = await prisma.encounter.groupBy({
     by: ["disease_id", "outcome"],
-    where: {
-      disease_id: { in: allowedDiseaseIds }
-    },
+    where: encounterWhere,
     _count: true,
   });
 
@@ -460,63 +474,100 @@ export async function getOutcomeAnalytics() {
  * TREND ANALYSIS (DISEASE-SPECIFIC)
  * Time-series data grouped by disease with distinct colors
  */
-export async function getTrendAnalysis() {
-  const allowedDiseaseIds = await getDynamicDiseaseIds();
+export async function getTrendAnalysis(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
   
   if (allowedDiseaseIds.length === 0) {
-    return [];
+    return {};
   }
 
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
   const encounters = await prisma.encounter.findMany({
-    where: {
-      disease_id: { in: allowedDiseaseIds }
-    },
+    where: encounterWhere,
     select: {
       date_of_diagnosis: true,
       disease_id: true,
+      disease: {
+        select: {
+          disease_name: true,
+        },
+      },
     },
     orderBy: {
       date_of_diagnosis: "asc",
     },
   });
 
-  // Aggregate trends across all diseases
-  const trendsMap: Record<string, number> = {};
+  // Group trends by disease
+  const trendsByDisease: Record<
+    string,
+    Array<{ date: string; count: number }>
+  > = {};
 
   encounters.forEach((encounter) => {
+    const diseaseName = encounter.disease.disease_name;
     const date = new Date(encounter.date_of_diagnosis)
       .toISOString()
       .split("T")[0];
 
-    trendsMap[date] = (trendsMap[date] || 0) + 1;
+    if (!trendsByDisease[diseaseName]) {
+      trendsByDisease[diseaseName] = [];
+    }
+
+    const existingTrend = trendsByDisease[diseaseName].find(
+      (t) => t.date === date
+    );
+
+    if (existingTrend) {
+      existingTrend.count++;
+    } else {
+      trendsByDisease[diseaseName].push({ date, count: 1 });
+    }
   });
 
-  // Convert to sorted array
-  const trends = Object.entries(trendsMap)
-    .map(([date, count]) => ({ date, count }))
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  // Ensure all diseases have the same date range for alignment
+  const allDates = new Set<string>();
+  Object.values(trendsByDisease).forEach((trends) => {
+    trends.forEach((t) => allDates.add(t.date));
+  });
 
-  return trends;
+  const sortedDates = Array.from(allDates).sort();
+
+  // Fill in missing dates with 0 count
+  const normalizedTrends: Record<
+    string,
+    Array<{ date: string; count: number }>
+  > = {};
+
+  Object.entries(trendsByDisease).forEach(([disease, trends]) => {
+    normalizedTrends[disease] = sortedDates.map((date) => {
+      const existingTrend = trends.find((t) => t.date === date);
+      return { date, count: existingTrend?.count || 0 };
+    });
+  });
+
+  return normalizedTrends;
 }
 
 /**
  * FACILITY COMPARISON
  * Compare performance metrics across facilities
  */
-export async function getFacilityComparison() {
-  const allowedDiseaseIds = await getDynamicDiseaseIds();
+export async function getFacilityComparison(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
   
   if (allowedDiseaseIds.length === 0) {
     return [];
   }
 
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
   const facilities =
     await prisma.facility.findMany({
       include: {
         encounters: {
-          where: {
-            disease_id: { in: allowedDiseaseIds }
-          }
+          where: encounterWhere
         },
       },
     });
@@ -558,26 +609,24 @@ export async function getFacilityComparison() {
  * PATIENT RECORDS
  * Fetch patient records with encounters, facilities, and treatment history
  */
-export async function getPatientRecords() {
-  const allowedDiseaseIds = await getDynamicDiseaseIds();
+export async function getPatientRecords(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
   
   if (allowedDiseaseIds.length === 0) {
     return [];
   }
 
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
   const patients = await prisma.patient.findMany({
     where: {
       encounters: {
-        some: {
-          disease_id: { in: allowedDiseaseIds }
-        }
+        some: encounterWhere
       }
     },
     include: {
       encounters: {
-        where: {
-          disease_id: { in: allowedDiseaseIds }
-        },
+        where: encounterWhere,
         include: {
           facility: true,
           disease: true,
