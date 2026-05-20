@@ -77,8 +77,8 @@ enum OutcomeResult {
 }
 
 enum IdentifierType {
-  HPN   // Health Passport Number — primary Malawi national health ID
-  NID   // National ID (Malawi National Registration Bureau)
+  HPN // Health Passport Number — primary Malawi national health ID
+  NID // National ID (Malawi National Registration Bureau)
   PASSPORT
   HOSPITAL_ID // Facility-assigned fallback
 }
@@ -97,21 +97,21 @@ enum SampleStatus {
 // =============================================================================
 
 model Facility {
-  id             String   @id @default(uuid())
-  facilityCode   String   @unique          // e.g. "KCH-001" (Kamuzu Central Hospital)
-  name           String
-  type           String                    // Hospital | District Hospital | Health Centre | Clinic
-  district       String
-  region         String                    // Northern | Central | Southern
-  latitude       Float?
-  longitude      Float?
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id           String   @id @default(uuid())
+  facilityCode String   @unique // e.g. "KCH-001" (Kamuzu Central Hospital)
+  name         String
+  type         String // Hospital | District Hospital | Health Centre | Clinic
+  district     String
+  region       String // Northern | Central | Southern
+  latitude     Float?
+  longitude    Float?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  wards          Ward[]
-  staff          Staff[]
-  encounters     PatientEncounter[]
+  wards      Ward[]
+  staff      Staff[]
+  encounters PatientEncounter[]
 
   @@map("facilities")
 }
@@ -122,17 +122,17 @@ model Facility {
 // =============================================================================
 
 model Ward {
-  id           String   @id @default(uuid())
-  facilityId   String
-  name         String                       // e.g. "TB Ward", "Cholera Treatment Unit"
-  specialty    String?                      // e.g. "Infectious Disease", "General Medicine"
-  bedCapacity  Int?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default(uuid())
+  facilityId  String
+  name        String // e.g. "TB Ward", "Cholera Treatment Unit"
+  specialty   String? // e.g. "Infectious Disease", "General Medicine"
+  bedCapacity Int?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  facility     Facility           @relation(fields: [facilityId], references: [id])
-  encounters   PatientEncounter[]
+  facility   Facility           @relation(fields: [facilityId], references: [id])
+  encounters PatientEncounter[]
 
   @@map("wards")
 }
@@ -143,20 +143,20 @@ model Ward {
 // =============================================================================
 
 model Staff {
-  id           String   @id @default(uuid())
-  facilityId   String
-  staffCode    String   @unique
-  firstName    String
-  lastName     String
-  role         String                       // Doctor | Nurse | Clinical Officer | Lab Technician
-  department   String?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id         String   @id @default(uuid())
+  facilityId String
+  staffCode  String   @unique // e.g. "KCH-DR-001" (Doctor 1 at Kamuzu Central Hospital)
+  firstName  String
+  lastName   String
+  role       String // Doctor | Nurse | Clinical Officer | Lab Technician
+  department String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  facility           Facility           @relation(fields: [facilityId], references: [id])
-  encounters         PatientEncounter[] @relation("AttendingClinician")
-  diagnoses          Diagnosis[]
+  facility   Facility           @relation(fields: [facilityId], references: [id])
+  encounters PatientEncounter[] @relation("AttendingClinician")
+  diagnoses  Diagnosis[]
 
   @@map("staff")
 }
@@ -168,24 +168,24 @@ model Staff {
 // =============================================================================
 
 model Patient {
-  id               String    @id @default(uuid())
-  dateOfBirth      DateTime?
-  sex              Sex       @default(UNKNOWN)
-  nationality      String?   @default("Malawian")
+  id          String    @id @default(uuid())
+  dateOfBirth DateTime?
+  sex         Sex       @default(UNKNOWN)
+  nationality String?   @default("Malawian")
 
   // Address fields — used for geographic aggregation in MDSS
-  village          String?
+  village              String?
   traditionalAuthority String?
-  district         String?
-  region           String?
+  district             String?
+  region               String?
 
-  isActive         Boolean   @default(true)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  identifiers      PatientIdentifier[]
-  encounters       PatientEncounter[]
-  contactInfo      PatientContact?
+  identifiers PatientIdentifier[]
+  encounters  PatientEncounter[]
+  contactInfo PatientContact?
 
   @@map("patients")
 }
@@ -197,18 +197,18 @@ model Patient {
 // =============================================================================
 
 model PatientIdentifier {
-  id             String         @id @default(uuid())
-  patientId      String
-  identifierType IdentifierType
+  id              String         @id @default(uuid())
+  patientId       String
+  identifierType  IdentifierType
   identifierValue String
-  isPrimary      Boolean        @default(false)
-  isVerified     Boolean        @default(false)
-  issuedBy       String?        // e.g. "Ministry of Health", "NRB"
-  expiresAt      DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  isPrimary       Boolean        @default(false)
+  isVerified      Boolean        @default(false)
+  issuedBy        String? // e.g. "Ministry of Health", "NRB"
+  expiresAt       DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
-  patient        Patient        @relation(fields: [patientId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
 
   @@unique([identifierType, identifierValue])
   @@index([identifierValue])
@@ -232,7 +232,7 @@ model PatientContact {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  patient     Patient  @relation(fields: [patientId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
 
   @@map("patient_contacts")
 }
@@ -244,16 +244,16 @@ model PatientContact {
 // =============================================================================
 
 model Disease {
-  id           String   @id @default(uuid())
-  icd10Code    String   @unique        // e.g. "A00" (Cholera), "A15" (TB), "B20" (HIV)
-  name         String                  // e.g. "Cholera", "Tuberculosis"
-  category     String                  // e.g. "Communicable", "Vector-borne"
-  isNotifiable Boolean  @default(false) // Notifiable to MoH/PHIM
-  isTrackedByMDSS Boolean @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(uuid())
+  icd10Code       String   @unique // e.g. "A00" (Cholera), "A15" (TB), "B20" (HIV)
+  name            String // e.g. "Cholera", "Tuberculosis"
+  category        String // e.g. "Communicable", "Vector-borne"
+  isNotifiable    Boolean  @default(false) // Notifiable to MoH/PHIM
+  isTrackedByMDSS Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  diagnoses    Diagnosis[]
+  diagnoses Diagnosis[]
 
   @@map("diseases")
 }
@@ -265,35 +265,35 @@ model Disease {
 // =============================================================================
 
 model PatientEncounter {
-  id               String          @id @default(uuid())
+  id               String  @id @default(uuid())
   patientId        String
   facilityId       String
   wardId           String?
   attendingStaffId String?
 
-  encounterType    EncounterType   @default(OUTPATIENT)
-  status           EncounterStatus @default(ACTIVE)
+  encounterType EncounterType   @default(OUTPATIENT)
+  status        EncounterStatus @default(ACTIVE)
 
-  admittedAt       DateTime        @default(now())
-  dischargedAt     DateTime?
-  transferredTo    String?         // Facility name if transferred out
+  admittedAt    DateTime  @default(now())
+  dischargedAt  DateTime?
+  transferredTo String? // Facility name if transferred out
 
-  chiefComplaint   String?
-  notes            String?
+  chiefComplaint String?
+  notes          String?
 
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  patient          Patient              @relation(fields: [patientId], references: [id])
-  facility         Facility             @relation(fields: [facilityId], references: [id])
-  ward             Ward?                @relation(fields: [wardId], references: [id])
-  attendingStaff   Staff?               @relation("AttendingClinician", fields: [attendingStaffId], references: [id])
+  patient        Patient  @relation(fields: [patientId], references: [id])
+  facility       Facility @relation(fields: [facilityId], references: [id])
+  ward           Ward?    @relation(fields: [wardId], references: [id])
+  attendingStaff Staff?   @relation("AttendingClinician", fields: [attendingStaffId], references: [id])
 
-  diagnoses        Diagnosis[]
-  treatments       Treatment[]
-  labResults       LabResult[]
-  vitals           VitalSigns[]
-  outcome          EncounterOutcome?
+  diagnoses  Diagnosis[]
+  treatments Treatment[]
+  labResults LabResult[]
+  vitals     VitalSigns[]
+  outcome    EncounterOutcome?
 
   @@index([patientId])
   @@index([facilityId])
@@ -308,20 +308,20 @@ model PatientEncounter {
 // =============================================================================
 
 model Diagnosis {
-  id             String          @id @default(uuid())
-  encounterId    String
-  diseaseId      String
-  diagnosedById  String?
-  status         DiagnosisStatus @default(CONFIRMED)
-  isPrimary      Boolean         @default(false)
-  diagnosedAt    DateTime        @default(now())
-  notes          String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id            String          @id @default(uuid())
+  encounterId   String
+  diseaseId     String
+  diagnosedById String?
+  status        DiagnosisStatus @default(CONFIRMED)
+  isPrimary     Boolean         @default(false)
+  diagnosedAt   DateTime        @default(now())
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
-  encounter      PatientEncounter @relation(fields: [encounterId], references: [id])
-  disease        Disease          @relation(fields: [diseaseId], references: [id])
-  diagnosedBy    Staff?           @relation(fields: [diagnosedById], references: [id])
+  encounter   PatientEncounter @relation(fields: [encounterId], references: [id])
+  disease     Disease          @relation(fields: [diseaseId], references: [id])
+  diagnosedBy Staff?           @relation(fields: [diagnosedById], references: [id])
 
   @@index([diseaseId])
   @@index([diagnosedAt])
@@ -335,15 +335,15 @@ model Diagnosis {
 
 model TreatmentProtocol {
   id            String   @id @default(uuid())
-  code          String   @unique         // e.g. "TB-CAT1", "MALARIA-AL3"
-  name          String                   // e.g. "TB Category 1 Regimen"
-  diseaseTarget String                   // Disease name this applies to
+  code          String   @unique // e.g. "TB-CAT1", "MALARIA-AL3"
+  name          String // e.g. "TB Category 1 Regimen"
+  diseaseTarget String // Disease name this applies to
   description   String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  treatments    Treatment[]
+  treatments Treatment[]
 
   @@map("treatment_protocols")
 }
@@ -355,24 +355,24 @@ model TreatmentProtocol {
 // =============================================================================
 
 model Treatment {
-  id              String          @id @default(uuid())
-  encounterId     String
-  protocolId      String?
-  drugName        String?                  // Free-text if no protocol matched
-  dosage          String?
-  route           String?                  // Oral | IV | IM | Topical
-  frequency       String?                  // e.g. "Once daily", "Twice daily"
-  startDate       DateTime        @default(now())
-  endDate         DateTime?
-  durationDays    Int?
-  status          TreatmentStatus @default(ONGOING)
+  id                 String          @id @default(uuid())
+  encounterId        String
+  protocolId         String?
+  drugName           String? // Free-text if no protocol matched
+  dosage             String?
+  route              String? // Oral | IV | IM | Topical
+  frequency          String? // e.g. "Once daily", "Twice daily"
+  startDate          DateTime        @default(now())
+  endDate            DateTime?
+  durationDays       Int?
+  status             TreatmentStatus @default(ONGOING)
   discontinuedReason String?
-  notes           String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  notes              String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
-  encounter       PatientEncounter  @relation(fields: [encounterId], references: [id])
-  protocol        TreatmentProtocol? @relation(fields: [protocolId], references: [id])
+  encounter PatientEncounter   @relation(fields: [encounterId], references: [id])
+  protocol  TreatmentProtocol? @relation(fields: [protocolId], references: [id])
 
   @@index([encounterId])
   @@index([startDate])
@@ -386,19 +386,19 @@ model Treatment {
 // =============================================================================
 
 model EncounterOutcome {
-  id              String        @id @default(uuid())
-  encounterId     String        @unique
-  result          OutcomeResult
-  recordedAt      DateTime      @default(now())
-  lengthOfStayDays Int?         // Computed: dischargedAt - admittedAt
-  wasReadmission  Boolean       @default(false)
-  readmittedWithin30Days Boolean @default(false)
-  causeOfDeath    String?       // ICD-10 code if result = DECEASED
-  notes           String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                     String        @id @default(uuid())
+  encounterId            String        @unique
+  result                 OutcomeResult
+  recordedAt             DateTime      @default(now())
+  lengthOfStayDays       Int? // Computed: dischargedAt - admittedAt
+  wasReadmission         Boolean       @default(false)
+  readmittedWithin30Days Boolean       @default(false)
+  causeOfDeath           String? // ICD-10 code if result = DECEASED
+  notes                  String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
 
-  encounter       PatientEncounter @relation(fields: [encounterId], references: [id])
+  encounter PatientEncounter @relation(fields: [encounterId], references: [id])
 
   @@map("encounter_outcomes")
 }
@@ -423,7 +423,7 @@ model VitalSigns {
   heightCm        Float?
   createdAt       DateTime @default(now())
 
-  encounter       PatientEncounter @relation(fields: [encounterId], references: [id])
+  encounter PatientEncounter @relation(fields: [encounterId], references: [id])
 
   @@index([encounterId])
   @@map("vital_signs")
@@ -436,24 +436,24 @@ model VitalSigns {
 // =============================================================================
 
 model LabResult {
-  id              String       @id @default(uuid())
-  encounterId     String
-  testName        String                    // e.g. "Malaria RDT", "TB GeneXpert", "HIV ELISA"
-  testCode        String?                   // LOINC or local code
-  sampleType      String?                   // Blood | Sputum | Urine | Stool
-  status          SampleStatus @default(PENDING)
-  orderedAt       DateTime     @default(now())
-  collectedAt     DateTime?
-  resultedAt      DateTime?
-  resultValue     String?                   // Raw result (numeric or categorical)
-  resultUnit      String?
-  referenceRange  String?
-  isPositive      Boolean?                  // Simplified flag for MDSS disease confirmation
-  notes           String?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id             String       @id @default(uuid())
+  encounterId    String
+  testName       String // e.g. "Malaria RDT", "TB GeneXpert", "HIV ELISA"
+  testCode       String? // LOINC or local code
+  sampleType     String? // Blood | Sputum | Urine | Stool
+  status         SampleStatus @default(PENDING)
+  orderedAt      DateTime     @default(now())
+  collectedAt    DateTime?
+  resultedAt     DateTime?
+  resultValue    String? // Raw result (numeric or categorical)
+  resultUnit     String?
+  referenceRange String?
+  isPositive     Boolean? // Simplified flag for MDSS disease confirmation
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
-  encounter       PatientEncounter @relation(fields: [encounterId], references: [id])
+  encounter PatientEncounter @relation(fields: [encounterId], references: [id])
 
   @@index([encounterId])
   @@index([testCode])
@@ -467,16 +467,16 @@ model LabResult {
 // =============================================================================
 
 model ApiSyncLog {
-  id              String   @id @default(uuid())
-  requestedBy     String                    // MDSS system identifier
-  endpoint        String                    // e.g. "/api/encounters"
-  queryParams     Json?                     // Filters sent (date range, facility, etc.)
+  id              String    @id @default(uuid())
+  requestedBy     String // MDSS system identifier
+  endpoint        String // e.g. "/api/encounters"
+  queryParams     Json? // Filters sent (date range, facility, etc.)
   recordsReturned Int?
-  syncStartedAt   DateTime @default(now())
+  syncStartedAt   DateTime  @default(now())
   syncCompletedAt DateTime?
-  success         Boolean  @default(false)
+  success         Boolean   @default(false)
   errorMessage    String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   @@map("api_sync_logs")
 }

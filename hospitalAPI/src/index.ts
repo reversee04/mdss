@@ -16,9 +16,10 @@ app.get("/sync-now", async (req, res) => {
 
 // schedule sync every 5 minutes
 let isRunning = false;
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("*/2 * * * *", async () => {
+    console.log("running", isRunning)
     if (isRunning) return; // prevent overlapping runs
-    isRunning = true;
+    isRunning = true;//else
     console.log("Running scheduled sync to MDSS...");
     await syncToMDSS();
     isRunning = false;

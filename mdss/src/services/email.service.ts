@@ -18,7 +18,7 @@ export async function sendEmail(config: EmailConfig): Promise<void> {
   });
 
   await transporter.sendMail({
-    from: process.env.SMTP_FROM || 'noreply@mdss.health.gov.mw',
+    from: process.env.SMTP_FROM || 'mdss@mdss.health.gov.mw',
     to: config.to.join(', '),
     subject: config.subject,
     html: config.html,

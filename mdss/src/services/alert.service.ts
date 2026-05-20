@@ -34,7 +34,7 @@ function calculateCasesPer100k(cases: number, population: number): number {
  */
 function determineSeverity(casesPer100k: number, threshold: number): 'low' | 'medium' | 'high' | 'critical' {
   const ratio = casesPer100k / threshold;
-  
+
   if (ratio >= 2.0) return 'critical';
   if (ratio >= 1.5) return 'high';
   if (ratio >= 1.2) return 'medium';
@@ -117,7 +117,7 @@ export async function monitorDisease(diseaseId: string, district?: string): Prom
     thresholdValue = warningThreshold;
   }
 
-  const severity = alertType !== 'none' 
+  const severity = alertType !== 'none'
     ? determineSeverity(casesPer100k, thresholdValue)
     : 'low';
 
@@ -151,7 +151,7 @@ function generateAlertMessage(
 ): string {
   const location = district ? ` in ${district}` : '';
   const typeText = alertType === 'outbreak' ? 'OUTBREAK DETECTED' : 'WARNING - IMPENDING OUTBREAK';
-  
+
   return `${typeText}: ${diseaseName}${location}. Current rate: ${casesPer100k.toFixed(1)} cases per 100k population. Threshold: ${threshold} cases per 100k.`;
 }
 
@@ -211,7 +211,7 @@ export async function sendAlert(
 export async function monitorAllDiseases(): Promise<void> {
   const allowedDiseaseIds = ['hiv', 'malaria', 'tb', 'cholera'];
   const diseases = await prisma.disease.findMany({
-    where: { 
+    where: {
       monitoring_enabled: true,
       disease_id: { in: allowedDiseaseIds }
     },
@@ -237,11 +237,18 @@ async function getDistrictPopulation(district?: string): Promise<number> {
 
 /**
  * Send notifications via multiple channels
+ * Updated to focus on dashboard notifications instead of email/SMS
  */
 async function sendNotifications(alert: any, recipients: string[]): Promise<void> {
-  // TODO: Implement email notifications
-  // TODO: Implement SMS notifications
-  // TODO: Implement in-app notifications
-  
-  console.log(`Alert sent to ${recipients.length} recipients:`, alert.message);
+  // Dashboard notifications are already handled by:
+  // 1. Alert is stored in database via prisma.outbreakAlert.create()
+  // 2. Dashboards fetch alerts via /api/alerts endpoint
+  // 3. Navbar polls for unacknowledged alerts every 60 seconds
+  // 4. Alerts page displays all alerts with filtering
+
+  console.log(`Dashboard alert created: ${alert.alert_type} - ${alert.message}`);
+  console.log(`Alert ID: ${alert.alert_id}, Severity: ${alert.severity}`);
+
+  // Note: Email/SMS notifications can be added later if needed
+  // For now, the system focuses on in-dashboard alert display
 }
