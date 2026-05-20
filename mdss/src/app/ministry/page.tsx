@@ -87,7 +87,23 @@ export default function MinistryDashboardPage() {
   const totalFacilities = 892; // Mock total to calculate reporting rate
 
   // Trends mapped
-  const trendsData = data.trends || [];
+  const trendsObject = data.trends || {};
+  const trendsData = Array.isArray(trendsObject) 
+    ? trendsObject 
+    : typeof trendsObject === 'object' 
+      ? (() => {
+          // Combine trends from all diseases
+          const allTrends: Record<string, number> = {};
+          Object.values(trendsObject).forEach((diseaseTrends: any) => {
+            if (Array.isArray(diseaseTrends)) {
+              diseaseTrends.forEach((t: any) => {
+                allTrends[t.date] = (allTrends[t.date] || 0) + t.count;
+              });
+            }
+          });
+          return Object.entries(allTrends).map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
+        })()
+      : [];
   const trendLabels = trendsData.map((t: any) => t.date);
   const trendCounts = trendsData.map((t: any) => t.count);
 
