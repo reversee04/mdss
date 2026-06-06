@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { StatCard } from '@/components/dashboard/stat-card'
-import { BarChart, PieChart } from '@/components/dashboard/charts'
-import { FilterPanel } from '@/components/dashboard/filter-panel'
+import { BarChart } from '@/components/dashboard/charts'
+import { FilterPanel, type FilterState } from '@/components/dashboard/filter-panel'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { TrendingUp, Award, Clock, Target, HelpCircle } from 'lucide-react'
 import { useAnalytics } from '@/hooks/use-analytics'
+import { formatFilterSummary, getMortalityRate, getTimestampLabel } from '@/lib/surveillance-dashboard'
 
 interface OutcomeData {
   outcome: string | null
@@ -20,20 +21,34 @@ export default function TreatmentEffectivenessPage() {
   const { getOutcomes, getDiseases, loading, error } = useAnalytics()
   const [outcomes, setOutcomes] = useState<OutcomeData[]>([])
   const [recoveryRate, setRecoveryRate] = useState('0%')
-  const [treatmentEffectiveness, setTreatmentEffectiveness] = useState<Record<string, number>>({})
+  const [treatmentSummary, setTreatmentSummary] = useState<any[]>([])
   const [topDiseases, setTopDiseases] = useState<any[]>([])
+  const [summaryByDisease, setSummaryByDisease] = useState<Record<string, any>>({})
+  const [filters, setFilters] = useState<FilterState>({})
+  const [timestamp, setTimestamp] = useState<string>()
 
   useEffect(() => {
     const fetchData = async () => {
       const [outcomeResponse, diseaseResponse] = await Promise.all([
-        getOutcomes(),
-        getDiseases({ limit: 8 }),
+        getOutcomes({
+          ...filters,
+          startDate: filters.startDate ? filters.startDate.toISOString().split('T')[0] : undefined,
+          endDate: filters.endDate ? filters.endDate.toISOString().split('T')[0] : undefined,
+        }),
+        getDiseases({
+          ...filters,
+          startDate: filters.startDate ? filters.startDate.toISOString().split('T')[0] : undefined,
+          endDate: filters.endDate ? filters.endDate.toISOString().split('T')[0] : undefined,
+          limit: 8,
+        }),
       ])
 
       if (outcomeResponse?.success && outcomeResponse.data) {
         setOutcomes(outcomeResponse.data.outcomes || [])
         setRecoveryRate(outcomeResponse.data.recoveryRate || '0%')
-        setTreatmentEffectiveness(outcomeResponse.data.treatmentEffectiveness || {})
+        setTreatmentSummary(outcomeResponse.data.treatmentSummary || [])
+        setSummaryByDisease(outcomeResponse.data.summaryByDisease || {})
+        setTimestamp(outcomeResponse.timestamp)
       }
 
       if (diseaseResponse?.success && diseaseResponse.data?.topDiseases) {
@@ -42,7 +57,7 @@ export default function TreatmentEffectivenessPage() {
     }
 
     fetchData()
-  }, [getOutcomes, getDiseases])
+  }, [getOutcomes, getDiseases, filters])
 
   if (error) {
     return (
@@ -56,15 +71,12 @@ export default function TreatmentEffectivenessPage() {
   }
 
   const totalRecovered = outcomes.find((o) => o.outcome?.toLowerCase() === 'recovered')?._count || 0
-  const totalDeceased = outcomes.find((o) => o.outcome?.toLowerCase() === 'deceased')?._count || 0
+  const totalDeceased = outcomes.reduce((sum, o) => {
+    const normalized = o.outcome?.toLowerCase()
+    return sum + (normalized === 'deceased' || normalized === 'dead' || normalized === 'death' || normalized === 'died' ? o._count : 0)
+  }, 0)
   const totalOutcomes = outcomes.reduce((sum, o) => sum + o._count, 0)
-
-  const treatmentArray = Object.entries(treatmentEffectiveness).map(([name, count], idx) => ({
-    rank: idx + 1,
-    treatment: name,
-    successRate: Math.round((count / (totalOutcomes || 1)) * 100),
-    patientsCount: count,
-  }))
+  const diseaseNames = Object.keys(summaryByDisease)
 
   return (
     <div className="space-y-6">
@@ -74,6 +86,9 @@ export default function TreatmentEffectivenessPage() {
         <p className="text-muted-foreground">
           {loading ? 'Loading treatment data...' : 'Analyze treatment outcomes, success rates, and patient recovery metrics'}
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {getTimestampLabel(timestamp)} | {formatFilterSummary(filters)}
+        </p>
       </div>
 
       {/* Filters */}
@@ -81,6 +96,8 @@ export default function TreatmentEffectivenessPage() {
         showDisease={true}
         showLocation={true}
         showTimeRange={true}
+        showDateRange={true}
+        onFilterChange={(newFilters) => setFilters({ ...filters, ...newFilters })}
       />
 
       {!loading && (
@@ -94,9 +111,9 @@ export default function TreatmentEffectivenessPage() {
                     <StatCard
                       title="Recovery Rate"
                       value={recoveryRate}
-                      change="+2.3%"
+                      change={`${totalRecovered.toLocaleString()} recovered`}
                       changeType="positive"
-                      description="vs last quarter"
+                      description={`${totalOutcomes.toLocaleString()} outcomes`}
                       icon={Award}
                     />
                   </div>
@@ -113,10 +130,10 @@ export default function TreatmentEffectivenessPage() {
                   <div>
                     <StatCard
                       title="Mortality Rate"
-                      value={`${totalOutcomes > 0 ? ((totalDeceased / totalOutcomes) * 100).toFixed(1) : 0}%`}
-                      change="-0.8%"
-                      changeType="positive"
-                      description="vs last quarter"
+                      value={getMortalityRate(totalDeceased, totalOutcomes)}
+                      change={`${totalDeceased.toLocaleString()} deaths`}
+                      changeType="negative"
+                      description={`${totalOutcomes.toLocaleString()} outcomes`}
                       icon={Target}
                     />
                   </div>
@@ -130,18 +147,18 @@ export default function TreatmentEffectivenessPage() {
             <StatCard
               title="Total Recovered"
               value={totalRecovered.toLocaleString()}
-              change="+18.5%"
+              change="Live"
               changeType="positive"
-              description="vs last quarter"
+              description="filtered records"
               icon={TrendingUp}
             />
 
             <StatCard
               title="Total Outcomes"
               value={totalOutcomes.toLocaleString()}
-              change="+12%"
-              changeType="positive"
-              description="vs last quarter"
+              change="Live"
+              changeType="neutral"
+              description="with known status"
               icon={Clock}
             />
           </div>
@@ -149,22 +166,24 @@ export default function TreatmentEffectivenessPage() {
           {/* Charts */}
           <div className="grid gap-4 md:grid-cols-2">
             <BarChart
-              title="Cases by Disease (Top 8)"
-              description="Disease cases across patient population"
-              labels={topDiseases.map((d) => d.disease)}
+              title="Outcome by Disease"
+              description="Stacked comparison of recovered, ongoing, deaths, and unknown"
+              labels={diseaseNames}
               datasets={[
-                {
-                  label: 'Cases',
-                  data: topDiseases.map((d) => d.count),
-                },
+                { label: 'Recovered', data: diseaseNames.map((disease) => summaryByDisease[disease]?.recovered || 0), backgroundColor: '#22c55e' },
+                { label: 'Ongoing', data: diseaseNames.map((disease) => summaryByDisease[disease]?.ongoing || 0), backgroundColor: '#3b82f6' },
+                { label: 'Deaths', data: diseaseNames.map((disease) => summaryByDisease[disease]?.deaths || 0), backgroundColor: '#ef4444' },
+                { label: 'Unknown', data: diseaseNames.map((disease) => summaryByDisease[disease]?.unknown || 0), backgroundColor: '#94a3b8' },
               ]}
+              horizontal
+              stacked
             />
-            <PieChart
-              title="Outcome Distribution"
-              description="Patient outcomes breakdown"
-              labels={outcomes.map((o) => o.outcome || 'Unknown')}
-              data={outcomes.map((o) => o._count)}
-              doughnut
+            <BarChart
+              title="Cases by Disease"
+              description="Filtered disease case totals for context"
+              labels={topDiseases.map((d) => d.disease)}
+              datasets={[{ label: 'Cases', data: topDiseases.map((d) => d.count) }]}
+              horizontal
             />
           </div>
 
@@ -184,38 +203,34 @@ export default function TreatmentEffectivenessPage() {
                   </Tooltip>
                 </TooltipProvider>
               </CardTitle>
-              <CardDescription>Treatment protocols by effectiveness</CardDescription>
+              <CardDescription>Treatment protocols with outcome denominators</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b">
-                      <th className="text-left font-medium p-3">Rank</th>
                       <th className="text-left font-medium p-3">Treatment</th>
-                      <th className="text-center font-medium p-3">Success Rate</th>
+                      <th className="text-center font-medium p-3">Recovery Rate</th>
+                      <th className="text-center font-medium p-3">Mortality Rate</th>
                       <th className="text-center font-medium p-3">Patients</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {treatmentArray.slice(0, 8).map((item) => (
+                    {treatmentSummary.slice(0, 8).map((item) => (
                       <tr key={item.treatment} className="border-b hover:bg-muted/50">
-                        <td className="p-3">
-                          <span
-                            className={`font-bold ${item.rank === 1 ? 'text-amber-500' : item.rank === 2 ? 'text-gray-400' : item.rank === 3 ? 'text-amber-700' : ''}`}
-                          >
-                            #{item.rank}
-                          </span>
-                        </td>
                         <td className="p-3 font-medium">{item.treatment}</td>
                         <td className="p-3 text-center">
                           <div className="flex items-center gap-3 justify-center min-w-[150px]">
-                            <Progress value={item.successRate} className="h-2 flex-1" />
-                            <span className="text-sm font-medium w-12">{item.successRate}%</span>
+                            <Progress value={item.recoveryRate} className="h-2 flex-1" />
+                            <span className="text-sm font-medium w-12">{item.recoveryRate}%</span>
                           </div>
                         </td>
                         <td className="p-3 text-center">
-                          <Badge variant="outline">{item.patientsCount.toLocaleString()}</Badge>
+                          {item.mortalityRate}%
+                        </td>
+                        <td className="p-3 text-center">
+                          <Badge variant="outline">{item.patients.toLocaleString()}</Badge>
                         </td>
                       </tr>
                     ))}

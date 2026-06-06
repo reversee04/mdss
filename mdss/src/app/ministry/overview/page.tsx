@@ -2,42 +2,33 @@
 
 import { useState, useEffect } from 'react'
 import { StatCard } from '@/components/dashboard/stat-card'
-import { LineChart, BarChart, PieChart } from '@/components/dashboard/charts'
+import { LineChart, BarChart } from '@/components/dashboard/charts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Download, TrendingUp, TrendingDown, Users, Building2, Activity, Loader2 } from 'lucide-react'
+import { combineTrendTotals, getMortalityRate, getOutcomeCount, getTimestampLabel, getTrendSeries } from '@/lib/surveillance-dashboard'
 
 export default function NationalOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [
-          diseasesRes,
-          encountersRes,
-          outcomesRes,
-          trendsRes,
-          facilitiesRes
-        ] = await Promise.all([
-          fetch('/api/analytics/diseases').then(r => r.json()),
-          fetch('/api/analytics/encounters').then(r => r.json()),
-          fetch('/api/analytics/outcomes').then(r => r.json()),
-          fetch('/api/analytics/trends').then(r => r.json()),
-          fetch('/api/analytics/facilities').then(r => r.json())
-        ]);
+        setError(null);
+        const response = await fetch('/api/analytics/surveillance-dashboard');
+        const dashboardRes = await response.json();
 
-        setData({
-          diseases: diseasesRes.data,
-          encounters: encountersRes.data,
-          outcomes: outcomesRes.data,
-          trends: trendsRes.data,
-          facilities: facilitiesRes.data,
-        });
+        if (!response.ok || !dashboardRes.success) {
+          throw new Error(dashboardRes.error || 'Failed to load national overview data');
+        }
+
+        setData({ ...dashboardRes.data, timestamp: dashboardRes.timestamp });
       } catch (error) {
         console.error("Failed to fetch analytics data", error);
+        setError(error instanceof Error ? error.message : 'Failed to load national overview data');
       } finally {
         setLoading(false);
       }
@@ -56,53 +47,47 @@ export default function NationalOverviewPage() {
     );
   }
 
+  if (error) {
+    return (
+      <Card className="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950">
+        <CardHeader>
+          <CardTitle>Unable to load national statistics</CardTitle>
+          <CardDescription>{error}</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
   // Stats mapped from API
   const totalCases = data.encounters?.totalEncounters || 0;
   const activeFacilitiesCount = Array.isArray(data.facilities) ? data.facilities.length : 0;
   const recoveryRate = data.outcomes?.recoveryRate || "0%";
+  const outcomesList = data.outcomes?.outcomes || [];
+  const deaths = getOutcomeCount(outcomesList, ['died', 'death', 'dead', 'deceased']);
 
   // Trends mapped
-  const trendsObject = data.trends || {};
-  const trendsData = Array.isArray(trendsObject) 
-    ? trendsObject 
-    : typeof trendsObject === 'object' 
-      ? (() => {
-          // Combine trends from all diseases
-          const allTrends: Record<string, number> = {};
-          Object.values(trendsObject).forEach((diseaseTrends: any) => {
-            if (Array.isArray(diseaseTrends)) {
-              diseaseTrends.forEach((t: any) => {
-                allTrends[t.date] = (allTrends[t.date] || 0) + t.count;
-              });
-            }
-          });
-          return Object.entries(allTrends).map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
-        })()
-      : [];
+  const trendsData = combineTrendTotals(getTrendSeries(data.trends));
 
   const trendLabels = trendsData.map((t: any) => t.date);
   const trendCounts = trendsData.map((t: any) => t.count);
 
-  // Regional data built from facilities
-  const regionMap: Record<string, { cases: number, deaths: number, population: number }> = {};
-  if (Array.isArray(data.facilities)) {
-    data.facilities.forEach((f: any) => {
-      const region = f.region || "Unknown";
-      if (!regionMap[region]) regionMap[region] = { cases: 0, deaths: 0, population: Math.floor(Math.random() * 5000000) + 2000000 };
-      regionMap[region].cases += f.totalEncounters;
-      regionMap[region].deaths += Math.floor(f.totalEncounters * 0.02); // Mock 2% CFR
-    });
-  }
-  const regionalData = Object.entries(regionMap).map(([region, d]) => ({ region, ...d }));
+  const regionMap: Record<string, { cases: number }> = {};
+  (data.demographics?.geographicDistribution || []).forEach((district: any) => {
+    const region = district.region || "Unknown";
+    if (!regionMap[region]) regionMap[region] = { cases: 0 };
+    regionMap[region].cases += district.cases || district.totalPatients || 0;
+  });
+  const regionalData = Object.entries(regionMap).map(([region, d]) => ({ region, ...d })).sort((a, b) => b.cases - a.cases);
 
   // Disease Stats
   const topDiseases = data.diseases?.topDiseases || [];
   const diseaseStats = topDiseases.slice(0, 4).map((d: any) => ({
     disease: d.disease,
     cases: d.count,
-    tsr: 85, // Mock TSR
-    cfr: 2.1, // Mock CFR
+    recoveryRate: data.outcomes?.summaryByDisease?.[d.disease]?.recoveryRate || 0,
+    mortalityRate: data.outcomes?.summaryByDisease?.[d.disease]?.mortalityRate || 0,
   }));
+  const monitoring = data.monitoring || {};
 
   return (
     <div className="space-y-6">
@@ -113,6 +98,7 @@ export default function NationalOverviewPage() {
           <p className="text-muted-foreground">
             Comprehensive national health statistics and trends
           </p>
+          <p className="mt-1 text-xs text-muted-foreground">{getTimestampLabel(data.timestamp)}</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline">
@@ -129,9 +115,9 @@ export default function NationalOverviewPage() {
       {/* Key Metrics */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
-          title="Total Population"
-          value="17.5M"
-          description="2024 estimate"
+          title="Districts Monitored"
+          value={monitoring.districtLocations || 0}
+          description={`${monitoring.enabledDiseases || 0} enabled diseases`}
           icon={Users}
         />
         <StatCard
@@ -150,10 +136,10 @@ export default function NationalOverviewPage() {
         />
         <StatCard
           title="National CFR"
-          value="2.7%"
-          change="-0.3%"
-          changeType="positive"
-          description="improving trend"
+          value={getMortalityRate(deaths, totalCases)}
+          change={`${deaths.toLocaleString()} deaths`}
+          changeType="negative"
+          description="tracked case outcomes"
           icon={TrendingDown}
         />
         <StatCard
@@ -181,14 +167,17 @@ export default function NationalOverviewPage() {
                 <p className="text-sm text-muted-foreground mb-2">total cases</p>
                 <div className="flex justify-center gap-2">
                   <Badge variant="outline" className="bg-green-100 text-green-800">
-                    TSR: {disease.tsr}%
+                    Recovery: {disease.recoveryRate}%
                   </Badge>
-                  <Badge variant="outline" className={disease.cfr > 5 ? 'bg-red-100 text-red-800' : ''}>
-                    CFR: {disease.cfr}%
+                  <Badge variant="outline" className={disease.mortalityRate > 5 ? 'bg-red-100 text-red-800' : ''}>
+                    Mortality: {disease.mortalityRate}%
                   </Badge>
                 </div>
               </div>
             ))}
+            {diseaseStats.length === 0 && (
+              <p className="text-center text-sm text-muted-foreground md:col-span-4">No tracked disease cases are available yet.</p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -221,47 +210,51 @@ export default function NationalOverviewPage() {
           labels={regionalData.map((r) => r.region)}
           datasets={[
             { label: 'Cases', data: regionalData.map((r) => r.cases) },
-            { label: 'Deaths', data: regionalData.map((r) => r.deaths), backgroundColor: '#ef4444' },
           ]}
         />
-        <PieChart
+        <BarChart
           title="Regional Case Distribution"
-          description="Percentage by region"
+          description="Ranked regional burden"
           labels={regionalData.map((r) => r.region)}
-          data={regionalData.map((r) => r.cases)}
+          datasets={[{ label: 'Cases', data: regionalData.map((r) => r.cases) }]}
+          horizontal
         />
       </div>
 
-      {/* National Targets */}
+      {/* Monitoring Thresholds */}
       <Card>
         <CardHeader>
-          <CardTitle>National Health Targets 2024</CardTitle>
-          <CardDescription>Progress towards key health indicators</CardDescription>
+          <CardTitle>Monitoring Thresholds</CardTitle>
+          <CardDescription>Configured warning and outbreak rates for enabled diseases</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-6">
-            {[
-              { name: 'HIV Treatment Coverage', current: 85, target: 95, unit: '%' },
-              { name: 'Malaria Incidence Reduction', current: 72, target: 90, unit: '%' },
-              { name: 'TB Detection Rate', current: 68, target: 80, unit: '%' },
-              { name: 'Facility Reporting Compliance', current: 95, target: 100, unit: '%' },
-            ].map((target) => (
-              <div key={target.name} className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="font-medium">{target.name}</span>
-                  <span className="text-sm">
-                    <span className="font-semibold">{target.current}%</span>
-                    <span className="text-muted-foreground"> / {target.target}%</span>
-                  </span>
+            {(monitoring.monitoredDiseases || []).map((disease: any) => {
+              const warning = disease.warningThreshold || 0;
+              const outbreak = disease.outbreakThreshold || 0;
+              const value = outbreak > 0 ? (warning / outbreak) * 100 : 0;
+
+              return (
+                <div key={disease.diseaseId} className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="font-medium">{disease.diseaseName}</span>
+                    <span className="text-sm">
+                      <span className="font-semibold">{warning}</span>
+                      <span className="text-muted-foreground"> / {outbreak} cases per 100k</span>
+                    </span>
+                  </div>
+                  <div className="relative h-3 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="absolute h-full bg-primary rounded-full"
+                      style={{ width: `${Math.min(value, 100)}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="relative h-3 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="absolute h-full bg-primary rounded-full"
-                    style={{ width: `${(target.current / target.target) * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
+              )
+            })}
+            {(monitoring.monitoredDiseases || []).length === 0 && (
+              <p className="text-sm text-muted-foreground">No disease monitoring thresholds are enabled yet.</p>
+            )}
           </div>
         </CardContent>
       </Card>

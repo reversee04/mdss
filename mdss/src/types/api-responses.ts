@@ -56,9 +56,28 @@ export interface DiseaseDistributionResponse extends ApiResponse<{
 export interface OutcomeAnalyticsResponse extends ApiResponse<{
   recoveryRate: string;
   treatmentEffectiveness: Record<string, number>;
+  treatmentSummary: Array<{
+    treatment: string;
+    patients: number;
+    recovered: number;
+    deaths: number;
+    ongoing: number;
+    unknown: number;
+    recoveryRate: number;
+    mortalityRate: number;
+  }>;
   outcomes: Array<{
     outcome: string | null;
     _count: number;
+  }>;
+  summaryByDisease: Record<string, {
+    total: number;
+    recovered: number;
+    deaths: number;
+    ongoing: number;
+    unknown: number;
+    recoveryRate: number;
+    mortalityRate: number;
   }>;
 }> {
   filters: {
@@ -67,12 +86,21 @@ export interface OutcomeAnalyticsResponse extends ApiResponse<{
   };
 }
 
-export interface TrendAnalysisResponse extends ApiResponse<
-  Array<{
+export interface TrendAnalysisResponse extends ApiResponse<{
+  series: Record<string, Array<{
     date: string;
     count: number;
-  }>
-> {
+  }>>;
+  summaryByDisease: Record<string, {
+    total: number;
+    peak: number;
+    current7DayAvg: number;
+    previous7DayAvg: number;
+    changePercent: number;
+    direction: string;
+    anomalies: Array<{ date: string; count: number; threshold: number }>;
+  }>;
+}> {
   filters: {
     startDate: string | null;
     endDate: string | null;

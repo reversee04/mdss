@@ -1,8 +1,65 @@
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 async function main() {
+  // Seed test users first
+  console.log("Seeding test users...");
+
+  const testUsers = [
+    {
+      user_id: "USR-ADMIN-001",
+      name: "Dr. Grace Banda",
+      email: "g.banda@health.gov.mw",
+      password: "password123",
+      role: "admin",
+    },
+    {
+      user_id: "USR-ANALYST-001",
+      name: "James Phiri",
+      email: "j.phiri@health.gov.mw",
+      password: "password123",
+      role: "analyst",
+    },
+    {
+      user_id: "USR-EPIDEMIO-001",
+      name: "Mary Chirwa",
+      email: "m.chirwa@health.gov.mw",
+      password: "password123",
+      role: "epidemiologist",
+    },
+    {
+      user_id: "USR-MINISTRY-001",
+      name: "Hon. Peter Kumwenda",
+      email: "p.kumwenda@ministry.gov.mw",
+      password: "password123",
+      role: "ministry",
+    },
+  ];
+
+  for (const user of testUsers) {
+    const passwordHash = await bcrypt.hash(user.password, 10);
+    await prisma.user.upsert({
+      where: { email: user.email },
+      update: {
+        name: user.name,
+        password_hash: passwordHash,
+        role: user.role,
+        status: "active",
+      },
+      create: {
+        user_id: user.user_id,
+        name: user.name,
+        email: user.email,
+        password_hash: passwordHash,
+        role: user.role,
+        status: "active",
+      },
+    });
+    console.log(`- Seeded user: ${user.name} (${user.email}) - Role: ${user.role}`);
+  }
+
   const diseases = [
     {
       id: "hiv",

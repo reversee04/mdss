@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { DataTable } from '@/components/dashboard/data-table'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -31,11 +31,173 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Users, UserPlus, MoreHorizontal, Edit, Trash2, Shield, Mail } from 'lucide-react'
-import { users } from '@/lib/mock-data'
+import { Users, UserPlus, MoreHorizontal, Edit, Trash2, Shield, Mail, Loader2 } from 'lucide-react'
+
+type User = {
+  id: string
+  name: string
+  email: string
+  role: string
+  status: string
+  lastLogin: string | null
+  createdAt: string
+}
 
 export default function UserManagementPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [users, setUsers] = useState<User[]>([])
+  const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: '',
+    facility: '',
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Fetch users from API
+  useEffect(() => {
+    fetchUsers()
+  }, [])
+
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch('/api/admin/users')
+      const data = await response.json()
+      if (data.success) {
+        setUsers(data.data)
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCreateUser = async () => {
+    if (!formData.name || !formData.email || !formData.password || !formData.role) {
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      const response = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        setIsAddDialogOpen(false)
+        setFormData({ name: '', email: '', password: '', role: '', facility: '' })
+        fetchUsers()
+      } else {
+        alert(data.error || 'Failed to create user')
+      }
+    } catch (error) {
+      console.error('Error creating user:', error)
+      alert('Failed to create user')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleUpdateUser = async () => {
+    if (!selectedUser) return
+
+    setIsSubmitting(true)
+    try {
+      const response = await fetch(`/api/admin/users/${selectedUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        setIsEditDialogOpen(false)
+        setSelectedUser(null)
+        setFormData({ name: '', email: '', password: '', role: '', facility: '' })
+        fetchUsers()
+      } else {
+        alert(data.error || 'Failed to update user')
+      }
+    } catch (error) {
+      console.error('Error updating user:', error)
+      alert('Failed to update user')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm('Are you sure you want to delete this user?')) return
+
+    try {
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: 'DELETE',
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        fetchUsers()
+      } else {
+        alert(data.error || 'Failed to delete user')
+      }
+    } catch (error) {
+      console.error('Error deleting user:', error)
+      alert('Failed to delete user')
+    }
+  }
+
+  const handleToggleStatus = async (userId: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active'
+
+    try {
+      const response = await fetch(`/api/admin/users/${userId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        fetchUsers()
+      } else {
+        alert(data.error || 'Failed to update user status')
+      }
+    } catch (error) {
+      console.error('Error updating user status:', error)
+      alert('Failed to update user status')
+    }
+  }
+
+  const openEditDialog = (user: User) => {
+    setSelectedUser(user)
+    setFormData({
+      name: user.name,
+      email: user.email,
+      password: '',
+      role: user.role,
+      facility: '',
+    })
+    setIsEditDialogOpen(true)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-[80vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading users...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -63,38 +225,44 @@ export default function UserManagementPage() {
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input id="name" placeholder="Enter full name" />
+                <Label htmlFor="add-name">Full Name</Label>
+                <Input
+                  id="add-name"
+                  placeholder="Enter full name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" placeholder="name@health.gov.mw" />
+                <Label htmlFor="add-email">Email</Label>
+                <Input
+                  id="add-email"
+                  type="email"
+                  placeholder="name@health.gov.mw"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="role">Role</Label>
-                <Select>
+                <Label htmlFor="add-password">Password</Label>
+                <Input
+                  id="add-password"
+                  type="password"
+                  placeholder="Enter password"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="add-role">Role</Label>
+                <Select value={formData.role} onValueChange={(value) => setFormData({ ...formData, role: value })}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a role" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="admin">System Admin</SelectItem>
-                    <SelectItem value="analyst">Data Analyst</SelectItem>
-                    <SelectItem value="epidemiologist">Epidemiologist</SelectItem>
-                    <SelectItem value="ministry">Ministry Official</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="facility">Assigned Facility (Optional)</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a facility" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="national">National Level</SelectItem>
-                    <SelectItem value="qech">Queen Elizabeth Central Hospital</SelectItem>
-                    <SelectItem value="kch">Kamuzu Central Hospital</SelectItem>
-                    <SelectItem value="mzuzu">Mzuzu Central Hospital</SelectItem>
+                    <SelectItem value="data_analyst">Data Analyst</SelectItem>
+                    <SelectItem value="ministry_official">Ministry Official</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -103,8 +271,74 @@ export default function UserManagementPage() {
               <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={() => setIsAddDialogOpen(false)}>
+              <Button onClick={handleCreateUser} disabled={isSubmitting}>
+                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Create User
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit User Dialog */}
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit User</DialogTitle>
+              <DialogDescription>
+                Update user information and role.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">Full Name</Label>
+                <Input
+                  id="edit-name"
+                  placeholder="Enter full name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-email">Email</Label>
+                <Input
+                  id="edit-email"
+                  type="email"
+                  placeholder="name@health.gov.mw"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-password">Password (leave blank to keep current)</Label>
+                <Input
+                  id="edit-password"
+                  type="password"
+                  placeholder="Enter new password"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-role">Role</Label>
+                <Select value={formData.role} onValueChange={(value) => setFormData({ ...formData, role: value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">System Admin</SelectItem>
+                    <SelectItem value="data_analyst">Data Analyst</SelectItem>
+                    <SelectItem value="ministry_official">Ministry Official</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleUpdateUser} disabled={isSubmitting}>
+                {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Update User
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -146,7 +380,7 @@ export default function UserManagementPage() {
             <Users className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">4</div>
+            <div className="text-2xl font-bold">0</div>
           </CardContent>
         </Card>
       </div>
@@ -215,7 +449,7 @@ export default function UserManagementPage() {
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => openEditDialog(item)}>
                         <Edit className="mr-2 h-4 w-4" />
                         Edit User
                       </DropdownMenuItem>
@@ -223,12 +457,12 @@ export default function UserManagementPage() {
                         <Mail className="mr-2 h-4 w-4" />
                         Send Email
                       </DropdownMenuItem>
-                      <DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleToggleStatus(item.id, item.status)}>
                         <Shield className="mr-2 h-4 w-4" />
                         {item.status === 'active' ? 'Deactivate' : 'Activate'}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-destructive">
+                      <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteUser(item.id)}>
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete User
                       </DropdownMenuItem>

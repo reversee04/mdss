@@ -23,24 +23,30 @@ import {
   RefreshCw,
   Loader2,
 } from 'lucide-react'
-import { etlLogs, systemHealth, systemNotifications, apiIntegrations } from '@/lib/mock-data'
+import { systemHealth, systemNotifications, apiIntegrations } from '@/lib/mock-data'
 
 export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [etlData, setEtlData] = useState<any>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [encountersRes, facilitiesRes] = await Promise.all([
+        const [encountersRes, facilitiesRes, etlRes] = await Promise.all([
           fetch('/api/analytics/encounters').then(r => r.json()),
           fetch('/api/analytics/facilities').then(r => r.json()),
+          fetch('/api/admin/etl').then(r => r.json()),
         ]);
 
         setData({
           encounters: encountersRes.data,
           facilities: facilitiesRes.data,
         });
+
+        if (etlRes.success) {
+          setEtlData(etlRes.data);
+        }
       } catch (error) {
         console.error("Failed to fetch admin dashboard data", error);
       } finally {
@@ -89,7 +95,7 @@ export default function AdminDashboardPage() {
         <StatCard
           title="Facilities Reporting"
           value={`${activeFacilitiesCount}/${totalFacilities}`}
-          change={`${totalFacilities > 0 ? ((activeFacilitiesCount/totalFacilities)*100).toFixed(1) : 0}%`}
+          change={`${totalFacilities > 0 ? ((activeFacilitiesCount / totalFacilities) * 100).toFixed(1) : 0}%`}
           changeType="positive"
           description="compliance rate"
           icon={Building2}
@@ -111,7 +117,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* System Health */}
-      <Card>
+      {/* <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5" />
@@ -163,7 +169,7 @@ export default function AdminDashboardPage() {
             </div>
           </div>
         </CardContent>
-      </Card>
+      </Card> */}
 
       <Tabs defaultValue="etl" className="space-y-4">
         <TabsList>
@@ -187,7 +193,7 @@ export default function AdminDashboardPage() {
             </CardHeader>
             <CardContent>
               <DataTable
-                data={etlLogs}
+                data={etlData?.etlLogs || []}
                 columns={[
                   { key: 'timestamp', header: 'Timestamp' },
                   { key: 'source', header: 'Source' },
@@ -200,15 +206,15 @@ export default function AdminDashboardPage() {
                           item.status === 'success'
                             ? 'default'
                             : item.status === 'failed'
-                            ? 'destructive'
-                            : 'secondary'
+                              ? 'destructive'
+                              : 'secondary'
                         }
                         className={
                           item.status === 'success'
                             ? 'bg-green-100 text-green-800 hover:bg-green-100'
                             : item.status === 'warning'
-                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
-                            : ''
+                              ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
+                              : ''
                         }
                       >
                         {item.status === 'success' && <CheckCircle className="mr-1 h-3 w-3" />}
@@ -262,15 +268,15 @@ export default function AdminDashboardPage() {
                           item.status === 'connected'
                             ? 'default'
                             : item.status === 'error'
-                            ? 'destructive'
-                            : 'secondary'
+                              ? 'destructive'
+                              : 'secondary'
                         }
                         className={
                           item.status === 'connected'
                             ? 'bg-green-100 text-green-800 hover:bg-green-100'
                             : item.status === 'degraded'
-                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
-                            : ''
+                              ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
+                              : ''
                         }
                       >
                         {item.status}
@@ -298,20 +304,18 @@ export default function AdminDashboardPage() {
                 {systemNotifications.map((notification) => (
                   <div
                     key={notification.id}
-                    className={`flex items-start gap-4 p-4 rounded-lg border ${
-                      !notification.read ? 'bg-muted/50' : ''
-                    }`}
+                    className={`flex items-start gap-4 p-4 rounded-lg border ${!notification.read ? 'bg-muted/50' : ''
+                      }`}
                   >
                     <div
-                      className={`p-2 rounded-full ${
-                        notification.type === 'error'
-                          ? 'bg-red-100 text-red-600'
-                          : notification.type === 'warning'
+                      className={`p-2 rounded-full ${notification.type === 'error'
+                        ? 'bg-red-100 text-red-600'
+                        : notification.type === 'warning'
                           ? 'bg-amber-100 text-amber-600'
                           : notification.type === 'success'
-                          ? 'bg-green-100 text-green-600'
-                          : 'bg-blue-100 text-blue-600'
-                      }`}
+                            ? 'bg-green-100 text-green-600'
+                            : 'bg-blue-100 text-blue-600'
+                        }`}
                     >
                       {notification.type === 'error' && <XCircle className="h-4 w-4" />}
                       {notification.type === 'warning' && <AlertTriangle className="h-4 w-4" />}

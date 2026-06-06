@@ -104,9 +104,10 @@ interface BarChartProps {
     backgroundColor?: string
   }[]
   horizontal?: boolean
+  stacked?: boolean
 }
 
-export function BarChart({ title, description, labels, datasets, horizontal = false }: BarChartProps) {
+export function BarChart({ title, description, labels, datasets, horizontal = false, stacked = false }: BarChartProps) {
   const colors = Object.values(chartColors)
   
   const data = {
@@ -127,8 +128,12 @@ export function BarChart({ title, description, labels, datasets, horizontal = fa
       },
     },
     scales: {
+      x: {
+        stacked,
+      },
       y: {
         beginAtZero: true,
+        stacked,
       },
     },
   }

@@ -54,6 +54,7 @@ export default function AlertsPage() {
   const [error, setError] = useState<string | null>(null)
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [stats, setStats] = useState<any>(null)
 
   useEffect(() => {
     fetchAlerts()
@@ -65,6 +66,9 @@ export default function AlertsPage() {
       const response = await fetch('/api/alerts')
       const result = await response.json()
       setAlerts(result)
+      const statsResponse = await fetch('/api/alerts/statistics')
+      const statsResult = await statsResponse.json()
+      if (statsResult.success) setStats(statsResult.data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch alerts')
     } finally {
@@ -245,7 +249,7 @@ export default function AlertsPage() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Avg Response Time</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">2.4 hrs</div>
+              <div className="text-2xl font-bold">{stats ? `${stats.avgResponseTimeHours} hrs` : '...'}</div>
             </CardContent>
           </Card>
         </div>

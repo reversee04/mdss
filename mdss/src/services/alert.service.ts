@@ -21,6 +21,38 @@ interface AlertResult {
   };
 }
 
+interface MonitoringResult extends AlertResult {
+  diseaseId: string;
+  diseaseName: string;
+  district?: string;
+  region?: string;
+  alertCreated?: boolean;
+  alertId?: string;
+}
+
+const DISTRICT_POPULATION: Record<string, number> = {
+  Balaka: 438000,
+  Blantyre: 1450000,
+  Chikwawa: 626000,
+  Chiradzulu: 356000,
+  Chitipa: 276000,
+  Dedza: 943000,
+  Karonga: 392000,
+  Lilongwe: 2700000,
+  Machinga: 771000,
+  Mangochi: 1160000,
+  Mulanje: 684000,
+  Mzimba: 1070000,
+  Nkhotakota: 395000,
+  Nsanje: 333000,
+  Phalombe: 449000,
+  Salima: 478000,
+  Thyolo: 721000,
+  Zomba: 1050000,
+};
+
+const FOCUS_DISEASE_IDS = ['hiv', 'malaria', 'tb', 'cholera'];
+
 /**
  * Calculate cases per 100,000 population
  */
@@ -33,6 +65,7 @@ function calculateCasesPer100k(cases: number, population: number): number {
  * Determine alert severity based on threshold breach
  */
 function determineSeverity(casesPer100k: number, threshold: number): 'low' | 'medium' | 'high' | 'critical' {
+  if (threshold <= 0) return 'low';
   const ratio = casesPer100k / threshold;
 
   if (ratio >= 2.0) return 'critical';
@@ -44,18 +77,41 @@ function determineSeverity(casesPer100k: number, threshold: number): 'low' | 'me
 /**
  * Check if alert should be sent based on cooldown period
  */
-async function shouldSendAlert(diseaseId: string): Promise<boolean> {
-  const disease = await prisma.disease.findUnique({
-    where: { disease_id: diseaseId },
-    select: { last_alert_sent: true, alert_cooldown_hours: true },
+async function shouldCreateAlert(
+  diseaseId: string,
+  alertType: 'warning' | 'outbreak',
+  cooldownHours: number,
+  district?: string,
+  region?: string
+): Promise<boolean> {
+  const activeDuplicate = await prisma.outbreakAlert.findFirst({
+    where: {
+      disease_id: diseaseId,
+      alert_type: alertType,
+      acknowledged: false,
+      district: district || null,
+      region: region || null,
+    },
+    select: { alert_id: true },
   });
 
-  if (!disease?.last_alert_sent) return true;
+  if (activeDuplicate) return false;
 
-  const cooldownEnd = new Date(disease.last_alert_sent);
-  cooldownEnd.setHours(cooldownEnd.getHours() + disease.alert_cooldown_hours);
+  const cooldownStart = new Date();
+  cooldownStart.setHours(cooldownStart.getHours() - Math.max(cooldownHours, 0));
 
-  return new Date() > cooldownEnd;
+  const recentDuplicate = await prisma.outbreakAlert.findFirst({
+    where: {
+      disease_id: diseaseId,
+      alert_type: alertType,
+      district: district || null,
+      region: region || null,
+      sent_at: { gte: cooldownStart },
+    },
+    select: { alert_id: true },
+  });
+
+  return !recentDuplicate;
 }
 
 /**
@@ -87,17 +143,17 @@ export async function monitorDisease(diseaseId: string, district?: string): Prom
   // Get recent cases (last 7 days by default)
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  sevenDaysAgo.setHours(0, 0, 0, 0);
 
   const encounters = await prisma.encounter.findMany({
     where: {
       disease_id: diseaseId,
       date_of_diagnosis: { gte: sevenDaysAgo },
-      ...(district && { facility: { district } }),
+      ...(district && { facility: { district: { equals: district, mode: 'insensitive' } } }),
     },
     include: { facility: true },
   });
 
-  // Calculate population (simplified - should use actual population data)
   const population = await getDistrictPopulation(district);
   const currentCases = encounters.length;
   const casesPer100k = calculateCasesPer100k(currentCases, population);
@@ -163,22 +219,29 @@ export async function sendAlert(
   alertResult: AlertResult,
   district?: string,
   region?: string
-): Promise<void> {
-  if (!alertResult.shouldAlert) return;
-
-  const canSend = await shouldSendAlert(diseaseId);
-  if (!canSend) {
-    console.log(`Alert cooldown active for disease ${diseaseId}`);
-    return;
-  }
+): Promise<{ created: boolean; alertId?: string; reason?: string }> {
+  if (!alertResult.shouldAlert) return { created: false, reason: 'No threshold breach' };
 
   // Create alert record
   const disease = await prisma.disease.findUnique({
     where: { disease_id: diseaseId },
-    select: { disease_name: true, alert_recipients: true },
+    select: { disease_name: true, alert_recipients: true, alert_cooldown_hours: true },
   });
 
-  if (!disease) return;
+  if (!disease) return { created: false, reason: 'Disease not found' };
+
+  const canCreate = await shouldCreateAlert(
+    diseaseId,
+    alertResult.alertType === 'none' ? 'warning' : alertResult.alertType,
+    disease.alert_cooldown_hours,
+    district,
+    region
+  );
+
+  if (!canCreate) {
+    console.log(`Duplicate/cooldown active for ${diseaseId} ${alertResult.alertType} ${district || region || 'national'}`);
+    return { created: false, reason: 'Duplicate active alert or cooldown period active' };
+  }
 
   const alert = await prisma.outbreakAlert.create({
     data: {
@@ -203,36 +266,130 @@ export async function sendAlert(
 
   // Send notifications (email, SMS, in-app)
   await sendNotifications(alert, disease.alert_recipients);
+  return { created: true, alertId: alert.alert_id };
 }
 
 /**
  * Monitor all diseases for outbreak conditions
  */
-export async function monitorAllDiseases(): Promise<void> {
-  const allowedDiseaseIds = ['hiv', 'malaria', 'tb', 'cholera'];
+export async function monitorAllDiseases(): Promise<MonitoringResult[]> {
   const diseases = await prisma.disease.findMany({
     where: {
       monitoring_enabled: true,
-      disease_id: { in: allowedDiseaseIds }
+      disease_id: { in: FOCUS_DISEASE_IDS }
     },
-    select: { disease_id: true },
+    select: { disease_id: true, disease_name: true },
   });
 
+  const districts = await prisma.facility.findMany({
+    distinct: ['district'],
+    select: { district: true, region: true },
+    orderBy: { district: 'asc' },
+  });
+
+  const results: MonitoringResult[] = [];
+
   for (const disease of diseases) {
-    const result = await monitorDisease(disease.disease_id);
-    if (result.shouldAlert) {
-      await sendAlert(disease.disease_id, result);
+    const nationalResult = await monitorDisease(disease.disease_id);
+    const nationalMonitoringResult: MonitoringResult = {
+      ...nationalResult,
+      diseaseId: disease.disease_id,
+      diseaseName: disease.disease_name,
+    };
+
+    if (nationalResult.shouldAlert) {
+      const sendResult = await sendAlert(disease.disease_id, nationalResult);
+      nationalMonitoringResult.alertCreated = sendResult.created;
+      nationalMonitoringResult.alertId = sendResult.alertId;
+    }
+    results.push(nationalMonitoringResult);
+
+    for (const district of districts) {
+      const result = await monitorDisease(disease.disease_id, district.district);
+      const monitoringResult: MonitoringResult = {
+        ...result,
+        diseaseId: disease.disease_id,
+        diseaseName: disease.disease_name,
+        district: district.district,
+        region: district.region,
+      };
+
+      if (result.shouldAlert) {
+        const sendResult = await sendAlert(disease.disease_id, result, district.district, district.region);
+        monitoringResult.alertCreated = sendResult.created;
+        monitoringResult.alertId = sendResult.alertId;
+      }
+
+      results.push(monitoringResult);
     }
   }
+
+  return results;
+}
+
+export async function monitorDiseaseAcrossLocations(diseaseId: string): Promise<MonitoringResult[]> {
+  const disease = await prisma.disease.findUnique({
+    where: { disease_id: diseaseId },
+    select: { disease_id: true, disease_name: true, monitoring_enabled: true },
+  });
+
+  if (!disease || !disease.monitoring_enabled) {
+    const result = await monitorDisease(diseaseId);
+    return [{
+      ...result,
+      diseaseId,
+      diseaseName: disease?.disease_name || diseaseId,
+    }];
+  }
+
+  const districts = await prisma.facility.findMany({
+    distinct: ['district'],
+    select: { district: true, region: true },
+    orderBy: { district: 'asc' },
+  });
+
+  const checks: Array<{ district?: string; region?: string }> = [
+    {},
+    ...districts.map((district) => ({ district: district.district, region: district.region })),
+  ];
+
+  const results: MonitoringResult[] = [];
+
+  for (const check of checks) {
+    const result = await monitorDisease(diseaseId, check.district);
+    const monitoringResult: MonitoringResult = {
+      ...result,
+      diseaseId,
+      diseaseName: disease.disease_name,
+      district: check.district,
+      region: check.region,
+    };
+
+    if (result.shouldAlert) {
+      const sendResult = await sendAlert(diseaseId, result, check.district, check.region);
+      monitoringResult.alertCreated = sendResult.created;
+      monitoringResult.alertId = sendResult.alertId;
+    }
+
+    results.push(monitoringResult);
+  }
+
+  return results;
 }
 
 /**
- * Get district population (placeholder - implement with actual data source)
+ * Get district population for threshold rate calculations.
  */
 async function getDistrictPopulation(district?: string): Promise<number> {
-  // TODO: Implement with actual population data from census or health ministry
-  // For now, return a default value
-  return 100000; // Default 100k population
+  if (!district) {
+    return Object.values(DISTRICT_POPULATION).reduce((sum, population) => sum + population, 0);
+  }
+
+  const districtKey = Object.keys(DISTRICT_POPULATION).find(
+    (name) => name.toLowerCase() === district.toLowerCase()
+  );
+
+  return districtKey ? DISTRICT_POPULATION[districtKey] : 100000;
 }
 
 /**

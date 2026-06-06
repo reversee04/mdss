@@ -14,6 +14,11 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
+    const disease = searchParams.get("disease");
+    const location = searchParams.get("location");
+    const district = searchParams.get("district");
+    const region = searchParams.get("region");
+    const facility = searchParams.get("facility");
 
     // Validate date formats if provided
     if (startDate && isNaN(Date.parse(startDate))) {
@@ -36,8 +41,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // TODO: Pass date range to service once updated
-    const encounters = await getEncounterStats();
+    const encounters = await getEncounterStats({
+      disease: disease || undefined,
+      location: location || district || undefined,
+      region: region || undefined,
+      facility: facility || undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+    });
 
     return NextResponse.json(
       {
@@ -46,6 +57,10 @@ export async function GET(request: NextRequest) {
         filters: {
           startDate: startDate || null,
           endDate: endDate || null,
+          disease: disease || null,
+          location: location || district || null,
+          region: region || null,
+          facility: facility || null,
         },
         timestamp: new Date().toISOString(),
       },

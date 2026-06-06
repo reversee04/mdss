@@ -44,10 +44,11 @@ const adminNav = [
   { title: 'ETL Monitoring', href: '/admin/etl', icon: Database },
   { title: 'User Management', href: '/admin/users', icon: Users },
   { title: 'Thresholds', href: '/admin/disease-thresholds', icon: Users },
-  { title: 'Facility Management', href: '/admin/facilities', icon: Building2 },
+  // { title: 'Facility Management', href: '/admin/facilities', icon: Building2 },
   { title: 'API Integrations', href: '/admin/integrations', icon: Activity },
   { title: 'Audit Logs', href: '/admin/audit', icon: ClipboardList },
   { title: 'Notifications', href: '/admin/notifications', icon: Bell, badge: 2 },
+  { title: 'Reports', href: '/admin/reports', icon: FileText },
   { title: 'Settings', href: '/settings', icon: Settings },
 ]
 
@@ -62,10 +63,10 @@ const analystNav = [
       { title: 'Demographics', href: '/analyst/demographics', icon: Users },
     ],
   },
-  { title: 'Treatment Effectiveness', href: '/analyst/treatment', icon: TrendingUp },
+  // { title: 'Treatment Effectiveness', href: '/analyst/treatment', icon: TrendingUp },
   { title: 'Patient Data', href: '/patient-data', icon: Stethoscope },
   { title: 'Alerts', href: '/alerts', icon: Bell, badge: 3 },
-  { title: 'Reports', href: '/reports', icon: FileText },
+  { title: 'Reports', href: '/analyst/reports', icon: FileText },
   { title: 'Settings', href: '/settings', icon: Settings },
 ]
 
@@ -74,7 +75,7 @@ const ministryNav = [
   { title: 'National Overview', href: '/ministry/overview', icon: BarChart3 },
   { title: 'Regional Analysis', href: '/ministry/regional', icon: PieChart },
   { title: 'Alerts', href: '/alerts', icon: Bell, badge: 3 },
-  { title: 'Reports', href: '/reports', icon: FileText },
+  { title: 'Reports', href: '/ministry/reports', icon: FileText },
   { title: 'Settings', href: '/settings', icon: Settings },
 ]
 
@@ -157,7 +158,7 @@ export function SidebarNav({ role }: SidebarNavProps) {
                         className={cn(
                           'w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                           pathname === child.href &&
-                            'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground'
+                          'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground'
                         )}
                       >
                         <Link href={child.href}>
@@ -181,7 +182,7 @@ export function SidebarNav({ role }: SidebarNavProps) {
                 className={cn(
                   'w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                   isActive &&
-                    'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground'
+                  'bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground'
                 )}
               >
                 <Link href={item.href}>

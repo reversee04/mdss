@@ -49,8 +49,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // TODO: Pass date range and interval to service once updated
-    const trends = await getTrendAnalysis();
+    const disease = searchParams.get("disease");
+    const location = searchParams.get("location");
+    const facility = searchParams.get("facility");
+
+    const trends = await getTrendAnalysis({
+      disease: disease || undefined,
+      location: location || undefined,
+      facility: facility || undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      interval,
+    });
 
     return NextResponse.json(
       {
@@ -59,6 +69,9 @@ export async function GET(request: NextRequest) {
         filters: {
           startDate: startDate || null,
           endDate: endDate || null,
+          disease: disease || null,
+          location: location || null,
+          facility: facility || null,
           interval,
         },
         timestamp: new Date().toISOString(),

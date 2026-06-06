@@ -18,9 +18,16 @@ export async function GET(request: NextRequest) {
     const facility = searchParams.get("facility");
     const district = searchParams.get("district");
     const status = searchParams.get("status");
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
 
-    // TODO: Pass filters to service once updated
-    const patients = await getPatientRecords();
+    const patients = await getPatientRecords({
+      disease: disease || undefined,
+      facility: facility || undefined,
+      location: district || undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+    });
 
     // Client-side filtering (TODO: move to service)
     let filteredPatients = patients;

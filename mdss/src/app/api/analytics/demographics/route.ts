@@ -7,7 +7,15 @@ import { getPatientDemographics } from "@/services/analytics.service";
  */
 export async function GET(request: NextRequest) {
   try {
-    const demographics = await getPatientDemographics();
+    const searchParams = request.nextUrl.searchParams;
+    const demographics = await getPatientDemographics({
+      disease: searchParams.get("disease") || undefined,
+      location: searchParams.get("location") || searchParams.get("district") || undefined,
+      region: searchParams.get("region") || undefined,
+      facility: searchParams.get("facility") || undefined,
+      startDate: searchParams.get("startDate") || undefined,
+      endDate: searchParams.get("endDate") || undefined,
+    });
 
     return NextResponse.json(
       {

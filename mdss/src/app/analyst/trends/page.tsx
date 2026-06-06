@@ -8,23 +8,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { useAnalytics } from '@/hooks/use-analytics'
-
-interface TrendData {
-  date: string
-  count: number
-}
+import {
+  buildDiseaseDatasets,
+  formatFilterSummary,
+  formatTrendLabels,
+  getAllTrendDates,
+  getTimestampLabel,
+  getTrendSeries,
+  getTrendSummary,
+} from '@/lib/surveillance-dashboard'
 
 interface DiseaseCount {
   disease: string
   count: number
   change?: number
-}
-
-const diseaseColors: Record<string, string> = {
-  'HIV/AIDS': '#ef4444',
-  'Malaria': '#f97316',
-  'Tuberculosis': '#3b82f6',
-  'Cholera': '#8b5cf6',
 }
 
 const trendIndicator = (value: number) => {
@@ -35,9 +32,10 @@ const trendIndicator = (value: number) => {
 
 export default function TrendsPage() {
   const { getTrends, getDiseases, loading, error } = useAnalytics()
-  const [trendsData, setTrendsData] = useState<TrendData[]>([])
+  const [trendsData, setTrendsData] = useState<any>(null)
   const [topDiseases, setTopDiseases] = useState<DiseaseCount[]>([])
   const [filters, setFilters] = useState<FilterState>({})
+  const [timestamp, setTimestamp] = useState<string>()
 
   useEffect(() => {
     const fetchData = async () => {
@@ -56,13 +54,14 @@ export default function TrendsPage() {
 
       if (trendsResponse?.success && trendsResponse.data) {
         setTrendsData(trendsResponse.data)
+        setTimestamp(trendsResponse.timestamp)
       }
 
       if (diseaseResponse?.success && diseaseResponse.data?.topDiseases) {
         const diseaseList = diseaseResponse.data.topDiseases.map((d: any, idx: number) => ({
           disease: d.disease,
           count: d.count,
-          change: Math.floor(Math.random() * 30) - 15,
+          change: trendsResponse?.data?.summaryByDisease?.[d.disease]?.changePercent || 0,
         }))
         setTopDiseases(diseaseList)
       }
@@ -82,45 +81,11 @@ export default function TrendsPage() {
     )
   }
 
-  // Ensure trendsData handles both array and object formats
-  let trendsArray: Array<{date: string; count: number}> = [];
-  let datasets: Array<{ label: string; data: number[]; borderColor: string }> = [];
-  
-  if (Array.isArray(trendsData)) {
-    // Legacy array format - combine all data
-    trendsArray = trendsData;
-    const chartData = trendsArray.map((d) => d.count)
-    datasets = [{ label: 'Total Cases', data: chartData, borderColor: '#006cbf' }]
-  } else if (typeof trendsData === 'object' && trendsData !== null) {
-    // Disease-grouped format - create separate datasets
-    const diseaseNames = Object.keys(trendsData).filter(name => trendsData[name])
-    
-    if (diseaseNames.length > 0) {
-      // Get all dates from first disease to establish date range
-      const firstDiseaseData = trendsData[diseaseNames[0]]
-      if (Array.isArray(firstDiseaseData)) {
-        trendsArray = firstDiseaseData
-        
-        // Create datasets for each disease with unique colors
-        datasets = diseaseNames.map((disease) => {
-          const diseaseData = trendsData[disease]
-          if (Array.isArray(diseaseData)) {
-            return {
-              label: disease,
-              data: diseaseData.map((d: any) => d.count),
-              borderColor: diseaseColors[disease] || '#006cbf',
-            }
-          }
-          return { label: disease, data: [], borderColor: '#006cbf' }
-        })
-      }
-    }
-  }
-
-  const chartLabels = trendsArray.map((d) => {
-    const date = new Date(d.date)
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  })
+  const series = getTrendSeries(trendsData)
+  const summaryByDisease = getTrendSummary(trendsData)
+  const dates = getAllTrendDates(series)
+  const datasets = buildDiseaseDatasets(series)
+  const chartLabels = formatTrendLabels(dates)
 
   // Calculate total and average from all datasets
   const totalCases = datasets.reduce((sum, dataset) => {
@@ -139,6 +104,9 @@ export default function TrendsPage() {
         <h1 className="text-3xl font-bold tracking-tight">Disease Trends</h1>
         <p className="text-muted-foreground">
           {loading ? 'Loading trend data...' : 'Monitor disease trends and patterns over time'}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {getTimestampLabel(timestamp)} | {formatFilterSummary(filters)}
         </p>
       </div>
 
@@ -168,7 +136,8 @@ export default function TrendsPage() {
           {/* Trend Summary Cards */}
           <div className="grid gap-4 md:grid-cols-4">
             {topDiseases.slice(0, 4).map((disease) => {
-              const trend = trendIndicator(disease.change || 0)
+              const summary = summaryByDisease[disease.disease] || {}
+              const trend = trendIndicator(summary.changePercent || 0)
               const TrendIcon = trend.icon
 
               return (
@@ -183,11 +152,11 @@ export default function TrendsPage() {
                       <span className="text-2xl font-bold">{disease.count.toLocaleString()}</span>
                       <div className={`flex items-center gap-1 ${trend.color}`}>
                         <TrendIcon className="h-4 w-4" />
-                        <span className="text-sm font-medium">{Math.abs(disease.change || 0)}%</span>
+                        <span className="text-sm font-medium">{Math.abs(summary.changePercent || 0)}%</span>
                       </div>
                     </div>
                     <Badge variant="outline" className="mt-2 text-xs">
-                      {trend.label}
+                      {trend.label} | 7-day avg {summary.current7DayAvg || 0}
                     </Badge>
                   </CardContent>
                 </Card>
@@ -205,7 +174,7 @@ export default function TrendsPage() {
             <TabsContent value="monthly" className="space-y-4">
               <LineChart
                 title="Disease Trends Over Time"
-                description={`Individual disease trends over the selected period (${trendsArray.length} days of data)`}
+                description={`Individual disease trends over the selected period (${dates.length} days of data)`}
                 labels={chartLabels}
                 datasets={datasets.length > 0 ? datasets : [{ label: 'No Data', data: [], borderColor: '#006cbf' }]}
               />
@@ -263,10 +232,11 @@ export default function TrendsPage() {
               <h3 className="text-lg font-semibold mb-4">Disease-Specific Trends</h3>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 {datasets.map((dataset) => {
-                  const diseaseTotal = dataset.data.reduce((a, b) => a + b, 0)
-                  const diseaseAvg = dataset.data.length > 0 ? Math.round(diseaseTotal / dataset.data.length) : 0
-                  const diseasePeak = dataset.data.length > 0 ? Math.max(...dataset.data) : 0
-                  const diseaseLowest = dataset.data.length > 0 ? Math.min(...(dataset.data.filter(v => v > 0))) : 0
+                  const summary = summaryByDisease[dataset.label] || {}
+                  const diseaseTotal = summary.total || dataset.data.reduce((a, b) => a + b, 0)
+                  const diseaseAvg = summary.current7DayAvg || 0
+                  const diseasePeak = summary.peak || 0
+                  const anomalyCount = summary.anomalies?.length || 0
 
                   return (
                     <Card key={dataset.label}>
@@ -293,8 +263,8 @@ export default function TrendsPage() {
                           <span className="font-semibold">{diseasePeak.toLocaleString()}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-sm text-muted-foreground">Lowest</span>
-                          <span className="font-semibold">{diseaseLowest.toLocaleString()}</span>
+                          <span className="text-sm text-muted-foreground">Anomaly days</span>
+                          <span className="font-semibold">{anomalyCount.toLocaleString()}</span>
                         </div>
                         <div className="pt-2 border-t">
                           <Badge 

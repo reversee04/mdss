@@ -11,8 +11,8 @@ import type {
 } from '@/types/api-responses';
 
 interface UseAnalyticsOptions {
-  startDate?: string;
-  endDate?: string;
+  startDate?: string | Date;
+  endDate?: string | Date;
   region?: string;
   district?: string;
   [key: string]: any;
@@ -64,7 +64,7 @@ export function useAnalytics() {
   );
 
   const getDemographics = useCallback(
-    () => fetchData<DemographicsResponse>('/demographics'),
+    (options?: UseAnalyticsOptions) => fetchData<DemographicsResponse>('/demographics', options),
     [fetchData]
   );
 

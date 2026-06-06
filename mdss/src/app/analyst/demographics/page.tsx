@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { BarChart, PieChart } from '@/components/dashboard/charts'
-import { FilterPanel } from '@/components/dashboard/filter-panel'
+import { BarChart } from '@/components/dashboard/charts'
+import { FilterPanel, type FilterState } from '@/components/dashboard/filter-panel'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Users, User, Baby, PersonStanding } from 'lucide-react'
 import { useAnalytics } from '@/hooks/use-analytics'
+import { formatFilterSummary, getTimestampLabel } from '@/lib/surveillance-dashboard'
 
 interface AgeGroup {
   ageGroup: string
@@ -21,23 +22,22 @@ interface SexDist {
   percentage: number
 }
 
-interface DiseaseItem {
-  disease: string
-  count: number
-}
-
 export default function DemographicsPage() {
-  const { getDemographics, getDiseases, loading, error } = useAnalytics()
+  const { getDemographics, loading, error } = useAnalytics()
   const [ageDistribution, setAgeDistribution] = useState<AgeGroup[]>([])
   const [sexDistribution, setSexDistribution] = useState<SexDist[]>([])
-  const [topDiseases, setTopDiseases] = useState<DiseaseItem[]>([])
+  const [diseaseAgeDistribution, setDiseaseAgeDistribution] = useState<Record<string, Record<string, number>>>({})
+  const [diseaseSexDistribution, setDiseaseSexDistribution] = useState<Record<string, Record<string, number>>>({})
+  const [filters, setFilters] = useState<FilterState>({})
+  const [timestamp, setTimestamp] = useState<string>()
 
   useEffect(() => {
     const fetchData = async () => {
-      const [demoResponse, diseaseResponse] = await Promise.all([
-        getDemographics(),
-        getDiseases({ limit: 10 }),
-      ])
+      const demoResponse = await getDemographics({
+        ...filters,
+        startDate: filters.startDate ? filters.startDate.toISOString().split('T')[0] : undefined,
+        endDate: filters.endDate ? filters.endDate.toISOString().split('T')[0] : undefined,
+      })
 
       // Process demographics data
       if (demoResponse?.success && demoResponse.data) {
@@ -71,16 +71,14 @@ export default function DemographicsPage() {
 
         setAgeDistribution(ageData)
         setSexDistribution(genderData)
-      }
-
-      // Process disease data
-      if (diseaseResponse?.success && diseaseResponse.data?.topDiseases) {
-        setTopDiseases(diseaseResponse.data.topDiseases)
+        setDiseaseAgeDistribution(demoResponse.data.diseaseAgeDistribution || {})
+        setDiseaseSexDistribution(demoResponse.data.diseaseSexDistribution || {})
+        setTimestamp(demoResponse.timestamp)
       }
     }
 
     fetchData()
-  }, [getDemographics, getDiseases])
+  }, [getDemographics, filters])
 
   if (error) {
     return (
@@ -103,6 +101,9 @@ export default function DemographicsPage() {
         <p className="text-muted-foreground">
           {loading ? 'Loading demographic data...' : 'Case distribution by age, sex, and population groups'}
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {getTimestampLabel(timestamp)} | {formatFilterSummary(filters)}
+        </p>
       </div>
 
       {/* Filters */}
@@ -110,6 +111,8 @@ export default function DemographicsPage() {
         showDisease={true}
         showLocation={true}
         showTimeRange={true}
+        showDateRange={true}
+        onFilterChange={(newFilters) => setFilters({ ...filters, ...newFilters })}
       />
 
       {loading && (
@@ -162,13 +165,19 @@ export default function DemographicsPage() {
                   data: ageDistribution.map((a) => a.cases),
                 },
               ]}
+              horizontal
             />
-            <PieChart
-              title="Sex Distribution"
-              description="Male vs Female cases"
+            <BarChart
+              title="Cases by Sex"
+              description="Simple split bar from patient records"
               labels={sexDistribution.map((s) => s.sex)}
-              data={sexDistribution.map((s) => s.cases)}
-              doughnut
+              datasets={[
+                {
+                  label: 'Cases',
+                  data: sexDistribution.map((s) => s.cases),
+                },
+              ]}
+              horizontal
             />
           </div>
 
@@ -213,7 +222,7 @@ export default function DemographicsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Disease Distribution by Demographics</CardTitle>
-              <CardDescription>How diseases affect different population groups</CardDescription>
+              <CardDescription>Real encounter counts grouped by disease, age band, and sex</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -221,44 +230,36 @@ export default function DemographicsPage() {
                   <thead>
                     <tr className="border-b">
                       <th className="text-left font-medium p-3">Disease</th>
-                      <th className="text-center font-medium p-3">0-14 yrs</th>
-                      <th className="text-center font-medium p-3">15-44 yrs</th>
-                      <th className="text-center font-medium p-3">45+ yrs</th>
+                      <th className="text-center font-medium p-3">0-17 yrs</th>
+                      <th className="text-center font-medium p-3">18-35 yrs</th>
+                      <th className="text-center font-medium p-3">36-50 yrs</th>
+                      <th className="text-center font-medium p-3">51-65 yrs</th>
+                      <th className="text-center font-medium p-3">66+ yrs</th>
                       <th className="text-center font-medium p-3">Male</th>
                       <th className="text-center font-medium p-3">Female</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {topDiseases.slice(0, 8).map((disease) => (
-                      <tr key={disease.disease} className="border-b hover:bg-muted/50">
-                        <td className="p-3 font-medium">{disease.disease}</td>
-                        <td className="p-3 text-center">
-                          <Badge variant="outline">
-                            {Math.floor(disease.count * 0.23).toLocaleString()}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-center">
-                          <Badge variant="outline">
-                            {Math.floor(disease.count * 0.63).toLocaleString()}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-center">
-                          <Badge variant="outline">
-                            {Math.floor(disease.count * 0.14).toLocaleString()}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-center">
-                          <Badge variant="secondary">
-                            {Math.floor(disease.count * 0.47).toLocaleString()}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-center">
-                          <Badge variant="secondary">
-                            {Math.floor(disease.count * 0.53).toLocaleString()}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
+                    {Object.keys(diseaseAgeDistribution).map((disease) => {
+                      const age = diseaseAgeDistribution[disease] || {}
+                      const sex = diseaseSexDistribution[disease] || {}
+                      return (
+                        <tr key={disease} className="border-b hover:bg-muted/50">
+                          <td className="p-3 font-medium">{disease}</td>
+                          {['0-17', '18-35', '36-50', '51-65', '66+'].map((band) => (
+                            <td key={band} className="p-3 text-center">
+                              <Badge variant="outline">{(age[band] || 0).toLocaleString()}</Badge>
+                            </td>
+                          ))}
+                          <td className="p-3 text-center">
+                            <Badge variant="secondary">{((sex.M || 0) + (sex.Male || 0)).toLocaleString()}</Badge>
+                          </td>
+                          <td className="p-3 text-center">
+                            <Badge variant="secondary">{((sex.F || 0) + (sex.Female || 0)).toLocaleString()}</Badge>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

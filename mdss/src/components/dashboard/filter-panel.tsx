@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -17,7 +18,7 @@ import {
 import { CalendarIcon, RotateCcw } from 'lucide-react'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
-import { diseases, districts, facilities } from '@/lib/mock-data'
+import { districts as mockDistricts, facilities as mockFacilities } from '@/lib/mock-data'
 
 interface FilterPanelProps {
   showDisease?: boolean
@@ -47,6 +48,31 @@ export function FilterPanel({
   onFilterChange,
   className,
 }: FilterPanelProps) {
+  const [diseases, setDiseases] = useState<Array<{ disease_id: string; disease_name: string }>>([])
+  const [loadingDiseases, setLoadingDiseases] = useState(false)
+
+  // Fetch real diseases from API on mount
+  useEffect(() => {
+    const fetchDiseases = async () => {
+      try {
+        setLoadingDiseases(true)
+        const response = await fetch('/api/admin/diseases/list')
+        const data = await response.json()
+        if (data.success && data.data) {
+          setDiseases(data.data)
+        }
+      } catch (error) {
+        console.error('Failed to fetch diseases:', error)
+      } finally {
+        setLoadingDiseases(false)
+      }
+    }
+
+    if (showDisease) {
+      fetchDiseases()
+    }
+  }, [showDisease])
+
   const handleReset = () => {
     onFilterChange?.({})
   }
@@ -56,13 +82,13 @@ export function FilterPanel({
       {showDisease && (
         <Select onValueChange={(value) => onFilterChange?.({ disease: value })}>
           <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="All Diseases" />
+            <SelectValue placeholder={loadingDiseases ? "Loading..." : "All Diseases"} />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Diseases</SelectItem>
             {diseases.map((disease) => (
-              <SelectItem key={disease.id} value={disease.id}>
-                {disease.name}
+              <SelectItem key={disease.disease_id} value={disease.disease_id}>
+                {disease.disease_name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -76,7 +102,7 @@ export function FilterPanel({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Districts</SelectItem>
-            {districts.map((district) => (
+            {mockDistricts.map((district) => (
               <SelectItem key={district} value={district.toLowerCase()}>
                 {district}
               </SelectItem>
@@ -92,7 +118,7 @@ export function FilterPanel({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Facilities</SelectItem>
-            {facilities.map((facility) => (
+            {mockFacilities.map((facility) => (
               <SelectItem key={facility.id} value={facility.id}>
                 {facility.name}
               </SelectItem>

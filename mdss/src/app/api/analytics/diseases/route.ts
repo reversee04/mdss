@@ -26,8 +26,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // TODO: Pass filters to service once updated
-    const diseases = await getDiseaseDistribution();
+    const district = searchParams.get("district") || searchParams.get("location");
+    const disease = searchParams.get("disease");
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
+
+    const diseases = await getDiseaseDistribution({
+      region: region || undefined,
+      district: district || undefined,
+      disease: disease || undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+    });
 
     return NextResponse.json(
       {
@@ -35,6 +45,10 @@ export async function GET(request: NextRequest) {
         data: diseases,
         filters: {
           region: region || null,
+          district: district || null,
+          disease: disease || null,
+          startDate: startDate || null,
+          endDate: endDate || null,
           limit: limit ? parseInt(limit) : 10,
         },
         timestamp: new Date().toISOString(),

@@ -89,9 +89,12 @@ model User {
   user_id       String     @id @db.VarChar(50)
   name          String     @db.VarChar(100)
   email         String     @unique @db.VarChar(100)
-  password_hash String     @db.VarChar(50)
+  password_hash String     @db.VarChar(255)
   role          String     @db.VarChar(50)
+  status        String     @default("active") @db.VarChar(20)
+  last_login    DateTime?
   created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
   reports       Report[]
   audit_logs    AuditLog[]
 }

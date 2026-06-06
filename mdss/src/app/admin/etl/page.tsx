@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { DataTable } from '@/components/dashboard/data-table'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -19,78 +20,113 @@ import {
   ArrowRightLeft,
   ArrowUpFromLine,
   Calendar,
+  Loader2,
 } from 'lucide-react'
-import { etlLogs } from '@/lib/mock-data'
 
-const pipelines = [
-  {
-    id: 1,
-    name: 'DHIS2 Import',
-    description: 'Daily import from District Health Information System',
-    status: 'running',
-    progress: 67,
-    lastRun: '2024-01-15 08:00:00',
-    nextRun: '2024-01-16 08:00:00',
-    frequency: 'Daily at 08:00',
-    recordsProcessed: 15420,
-  },
-  {
-    id: 2,
-    name: 'Laboratory Results Sync',
-    description: 'Real-time sync from central lab system',
-    status: 'completed',
-    progress: 100,
-    lastRun: '2024-01-15 10:30:00',
-    nextRun: '2024-01-15 11:00:00',
-    frequency: 'Every 30 minutes',
-    recordsProcessed: 2845,
-  },
-  {
-    id: 3,
-    name: 'Facility Reports ETL',
-    description: 'Weekly aggregation of facility reports',
-    status: 'scheduled',
-    progress: 0,
-    lastRun: '2024-01-08 00:00:00',
-    nextRun: '2024-01-15 00:00:00',
-    frequency: 'Weekly on Sunday',
-    recordsProcessed: 0,
-  },
-  {
-    id: 4,
-    name: 'WHO API Sync',
-    description: 'External data sync from WHO disease database',
-    status: 'failed',
-    progress: 45,
-    lastRun: '2024-01-15 06:00:00',
-    nextRun: '2024-01-15 12:00:00',
-    frequency: 'Every 6 hours',
-    recordsProcessed: 1200,
-    error: 'Connection timeout after 30s',
-  },
-  {
-    id: 5,
-    name: 'Data Quality Check',
-    description: 'Validation and deduplication process',
-    status: 'completed',
-    progress: 100,
-    lastRun: '2024-01-15 09:00:00',
-    nextRun: '2024-01-15 21:00:00',
-    frequency: 'Twice daily',
-    recordsProcessed: 45000,
-  },
-]
+type Pipeline = {
+  id: string
+  name: string
+  status: 'completed' | 'running' | 'failed' | 'scheduled' | string
+  description?: string
+  progress?: number
+  error?: string
+  frequency?: string
+  lastRun?: string
+  nextRun?: string
+  recordsProcessed?: number
+}
 
-const etlMetrics = {
-  totalPipelines: 12,
-  activePipelines: 8,
-  failedToday: 2,
-  recordsToday: 125450,
-  avgProcessingTime: '4.2s',
-  successRate: 94.5,
+type EtlLog = {
+  timestamp: string
+  source: string
+  status: string
+  records: number | string
+  duration: string
+  error?: string
+}
+
+type EtlMetrics = {
+  totalPipelines?: number
+  activePipelines?: number
+  failedToday?: number
+  recordsToday?: number
+  avgProcessingTime?: string | number
+  successRate?: number
+}
+
+type EtlData = {
+  pipelines: Pipeline[]
+  etlMetrics: EtlMetrics
+  etlLogs: EtlLog[]
 }
 
 export default function ETLMonitoringPage() {
+  const [loading, setLoading] = useState(true);
+  const [etlData, setEtlData] = useState<EtlData | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const response = await fetch('/api/admin/etl');
+        const data = await response.json();
+        if (data.success) {
+          setEtlData(data.data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch ETL data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  const handleRunAllPipelines = async () => {
+    setSyncing(true);
+    try {
+      // Trigger the sync endpoint
+      const response = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patients: [],
+          encounters: [],
+          diseases: [],
+          facilities: []
+        })
+      });
+
+      if (response.ok) {
+        // Refresh ETL data after sync
+        const etlResponse = await fetch('/api/admin/etl');
+        const etlData = await etlResponse.json();
+        if (etlData.success) {
+          setEtlData(etlData.data);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to run pipelines:', error);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-[80vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading ETL data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const pipelines = etlData?.pipelines || [];
+  const etlMetrics = etlData?.etlMetrics || {};
+  const etlLogs = etlData?.etlLogs || [];
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -106,9 +142,13 @@ export default function ETLMonitoringPage() {
             <Calendar className="mr-2 h-4 w-4" />
             Schedule
           </Button>
-          <Button>
-            <Play className="mr-2 h-4 w-4" />
-            Run All Pipelines
+          <Button onClick={handleRunAllPipelines} disabled={syncing}>
+            {syncing ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="mr-2 h-4 w-4" />
+            )}
+            {syncing ? 'Running...' : 'Run All Pipelines'}
           </Button>
         </div>
       </div>
@@ -120,7 +160,7 @@ export default function ETLMonitoringPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Total Pipelines</p>
-                <p className="text-2xl font-bold">{etlMetrics.totalPipelines}</p>
+                <p className="text-2xl font-bold">{etlMetrics.totalPipelines || 0}</p>
               </div>
               <Database className="h-8 w-8 text-muted-foreground" />
             </div>
@@ -131,7 +171,7 @@ export default function ETLMonitoringPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Active Now</p>
-                <p className="text-2xl font-bold text-green-600">{etlMetrics.activePipelines}</p>
+                <p className="text-2xl font-bold text-green-600">{etlMetrics.activePipelines || 0}</p>
               </div>
               <Play className="h-8 w-8 text-green-600" />
             </div>
@@ -142,7 +182,7 @@ export default function ETLMonitoringPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Failed Today</p>
-                <p className="text-2xl font-bold text-red-600">{etlMetrics.failedToday}</p>
+                <p className="text-2xl font-bold text-red-600">{etlMetrics.failedToday || 0}</p>
               </div>
               <XCircle className="h-8 w-8 text-red-600" />
             </div>
@@ -153,7 +193,7 @@ export default function ETLMonitoringPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Records Today</p>
-                <p className="text-2xl font-bold">{etlMetrics.recordsToday.toLocaleString()}</p>
+                <p className="text-2xl font-bold">{(etlMetrics.recordsToday || 0).toLocaleString()}</p>
               </div>
               <ArrowDownToLine className="h-8 w-8 text-muted-foreground" />
             </div>
@@ -164,7 +204,7 @@ export default function ETLMonitoringPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Avg. Time</p>
-                <p className="text-2xl font-bold">{etlMetrics.avgProcessingTime}</p>
+                <p className="text-2xl font-bold">{etlMetrics.avgProcessingTime || 'N/A'}</p>
               </div>
               <Clock className="h-8 w-8 text-muted-foreground" />
             </div>
@@ -175,7 +215,7 @@ export default function ETLMonitoringPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">Success Rate</p>
-                <p className="text-2xl font-bold text-green-600">{etlMetrics.successRate}%</p>
+                <p className="text-2xl font-bold text-green-600">{etlMetrics.successRate || 0}%</p>
               </div>
               <CheckCircle className="h-8 w-8 text-green-600" />
             </div>
@@ -218,17 +258,17 @@ export default function ETLMonitoringPage() {
                             pipeline.status === 'completed'
                               ? 'default'
                               : pipeline.status === 'running'
-                              ? 'secondary'
-                              : pipeline.status === 'failed'
-                              ? 'destructive'
-                              : 'outline'
+                                ? 'secondary'
+                                : pipeline.status === 'failed'
+                                  ? 'destructive'
+                                  : 'outline'
                           }
                           className={
                             pipeline.status === 'completed'
                               ? 'bg-green-100 text-green-800 hover:bg-green-100'
                               : pipeline.status === 'running'
-                              ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
-                              : ''
+                                ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
+                                : ''
                           }
                         >
                           {pipeline.status === 'running' && (
@@ -274,7 +314,7 @@ export default function ETLMonitoringPage() {
                         </div>
                         <div>
                           <span className="text-muted-foreground">Records Processed</span>
-                          <p className="font-medium">{pipeline.recordsProcessed.toLocaleString()}</p>
+                          <p className="font-medium">{pipeline.recordsProcessed !== undefined ? pipeline.recordsProcessed.toLocaleString() : '0'}</p>
                         </div>
                       </div>
                     </div>
@@ -330,15 +370,15 @@ export default function ETLMonitoringPage() {
                           item.status === 'success'
                             ? 'default'
                             : item.status === 'failed'
-                            ? 'destructive'
-                            : 'secondary'
+                              ? 'destructive'
+                              : 'secondary'
                         }
                         className={
                           item.status === 'success'
                             ? 'bg-green-100 text-green-800 hover:bg-green-100'
                             : item.status === 'warning'
-                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
-                            : ''
+                              ? 'bg-amber-100 text-amber-800 hover:bg-amber-100'
+                              : ''
                         }
                       >
                         {item.status === 'success' && <CheckCircle className="mr-1 h-3 w-3" />}
@@ -470,8 +510,8 @@ export default function ETLMonitoringPage() {
                           dest.status === 'healthy'
                             ? 'bg-green-100 text-green-800 hover:bg-green-100'
                             : dest.status === 'syncing'
-                            ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
-                            : ''
+                              ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
+                              : ''
                         }
                       >
                         {dest.status === 'syncing' && <RefreshCw className="mr-1 h-3 w-3 animate-spin" />}

@@ -28,21 +28,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // TODO: Pass filters to service once updated
-    let facilities = await getFacilityComparison();
+    const disease = searchParams.get("disease");
+    const location = searchParams.get("location");
+    const startDate = searchParams.get("startDate");
+    const endDate = searchParams.get("endDate");
 
-    // Client-side sorting (TODO: move to service)
-    if (sort === "recovery") {
-      facilities = facilities.sort((a, b) => {
-        const rateA = parseFloat(a.recoveryRate.replace("%", ""));
-        const rateB = parseFloat(b.recoveryRate.replace("%", ""));
-        return rateB - rateA;
-      });
-    } else {
-      facilities = facilities.sort(
-        (a, b) => b.totalEncounters - a.totalEncounters
-      );
-    }
+    const facilities = await getFacilityComparison({
+      region: region || undefined,
+      district: district || location || undefined,
+      disease: disease || undefined,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      sort,
+    });
 
     return NextResponse.json(
       {
@@ -50,7 +48,10 @@ export async function GET(request: NextRequest) {
         data: facilities,
         filters: {
           region: region || null,
-          district: district || null,
+          district: district || location || null,
+          disease: disease || null,
+          startDate: startDate || null,
+          endDate: endDate || null,
           sort,
         },
         timestamp: new Date().toISOString(),
