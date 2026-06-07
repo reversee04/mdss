@@ -698,6 +698,16 @@ export async function getTrendAnalysis(filters?: AnalyticsFilters) {
     Array<{ date: string; count: number }>
   > = {};
 
+  // Initialize with all allowed diseases
+  const diseaseRecords = await prisma.disease.findMany({
+    where: { disease_id: { in: allowedDiseaseIds } },
+    select: { disease_name: true }
+  });
+
+  diseaseRecords.forEach((d) => {
+    trendsByDisease[d.disease_name] = [];
+  });
+
   encounters.forEach((encounter) => {
     const diseaseName = encounter.disease.disease_name;
     const date = intervalBucket(new Date(encounter.date_of_diagnosis), filters?.interval || "daily");
@@ -719,6 +729,18 @@ export async function getTrendAnalysis(filters?: AnalyticsFilters) {
 
   // Ensure all diseases have the same date range for alignment
   const allDates = new Set<string>();
+
+  // If a date range is provided, generate all buckets within that range
+  if (filters?.startDate && filters?.endDate) {
+    let current = new Date(filters.startDate);
+    const end = new Date(filters.endDate);
+    while (current <= end) {
+      allDates.add(intervalBucket(current, filters.interval || "daily"));
+      current.setDate(current.getDate() + 1); // This correctly handles daily, others will be deduplicated by intervalBucket and Set
+    }
+  }
+
+  // Also include any dates from encounters (in case they fall outside the filter somehow, or if no filter was provided)
   Object.values(trendsByDisease).forEach((trends) => {
     trends.forEach((t) => allDates.add(t.date));
   });

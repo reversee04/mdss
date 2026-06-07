@@ -1,6 +1,7 @@
 export const diseaseColors: Record<string, string> = {
   "HIV/AIDS": "#ef4444",
   Malaria: "#f97316",
+  "Malaria (P. falciparum)": "#f97316",
   Tuberculosis: "#3b82f6",
   Cholera: "#8b5cf6",
 };

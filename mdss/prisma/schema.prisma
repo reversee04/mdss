@@ -98,6 +98,67 @@ model User {
   updated_at    DateTime   @updatedAt
   reports       Report[]
   audit_logs    AuditLog[]
+  settings      UserSettings?
+  notifications NotificationPreferences?
+}
+
+model UserSettings {
+  id                String   @id @default(cuid())
+  user_id           String   @unique
+  user              User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  
+  // Profile Information
+  phone             String?  @db.VarChar(20)
+  job_title         String?  @db.VarChar(100)
+  department        String?  @db.VarChar(100)
+  profile_image_url String?  @db.VarChar(500)
+  
+  // Security Settings
+  two_factor_enabled Boolean @default(false)
+  two_factor_secret String?  @db.VarChar(255)
+  
+  // UI Preferences
+  theme             String   @default("light") // light, dark, system
+  language          String   @default("en")
+  timezone          String   @default("Africa/Blantyre")
+  
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+}
+
+model NotificationPreferences {
+  id                   String   @id @default(cuid())
+  user_id              String   @unique
+  user                 User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  
+  // Alert Notifications
+  critical_outbreak_alerts    Boolean @default(true)
+  high_severity_alerts        Boolean @default(true)
+  medium_severity_alerts      Boolean @default(true)
+  data_quality_alerts         Boolean @default(true)
+  
+  // System Notifications
+  etl_pipeline_status         Boolean @default(true)
+  system_maintenance          Boolean @default(true)
+  report_generation           Boolean @default(false)
+  
+  // Email Settings
+  email_digest_frequency      String   @default("daily") // realtime, hourly, daily, weekly
+  email_enabled               Boolean  @default(true)
+  
+  created_at                  DateTime @default(now())
+  updated_at                  DateTime @updatedAt
+}
+
+model SystemConfiguration {
+  id                    String   @id @default(cuid())
+  key                   String   @unique
+  value                 String
+  description           String?  @db.Text
+  category              String   @default("general") // general, data, alerts, maintenance
+  
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
 }
 
 model Analysis {
