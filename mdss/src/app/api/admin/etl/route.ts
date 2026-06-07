@@ -1,5 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { auth } from '../../../../../auth';
+import { AuditAction, AuditCategory, AuditService, AuditSeverity, getAuditRequestContext } from '@/services/audit.service';
+
+function isAdmin(role?: string) {
+  return role === 'admin' || role === 'System Admin';
+}
 
 export async function GET() {
   try {
@@ -128,6 +134,89 @@ export async function GET() {
     console.error('ETL status error:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to fetch ETL status', message: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * POST /api/admin/etl
+ * Trigger ETL sync from hospitalAPI
+ */
+export async function POST(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id || !isAdmin(session.user.role)) {
+    return NextResponse.json(
+      { success: false, error: 'Unauthorized. Admin role required.' },
+      { status: 403 }
+    );
+  }
+
+  const auditContext = getAuditRequestContext(request);
+
+  try {
+    await AuditService.log({
+      userId: session.user.id,
+      action: AuditAction.ETL_SYNC_STARTED,
+      entityAffected: 'ETL',
+      details: 'ETL sync initiated by admin',
+      category: AuditCategory.ETL,
+      ...auditContext,
+    });
+
+    // Get hospitalAPI URL from environment or use default
+    const hospitalApiUrl = process.env.HOSPITAL_API_URL || 'http://127.0.0.1:4000';
+
+    console.log(`Triggering sync from hospitalAPI at ${hospitalApiUrl}`);
+
+    // Call the hospitalAPI sync endpoint
+    const response = await fetch(`${hospitalApiUrl}/sync-now`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HospitalAPI returned ${response.status}: ${response.statusText}`);
+    }
+
+    const result = await response.text();
+    console.log('HospitalAPI sync response:', result);
+
+    await AuditService.log({
+      userId: session.user.id,
+      action: AuditAction.ETL_SYNC_COMPLETED,
+      entityAffected: 'ETL',
+      details: `ETL sync triggered successfully. Response: ${result.slice(0, 250)}`,
+      category: AuditCategory.ETL,
+      ...auditContext,
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: 'ETL sync triggered successfully',
+      hospitalApiResponse: result,
+    });
+  } catch (error: any) {
+    console.error('Failed to trigger ETL sync:', error);
+    await AuditService.log({
+      userId: session.user.id,
+      action: AuditAction.ETL_SYNC_FAILED,
+      entityAffected: 'ETL',
+      details: `ETL sync failed: ${error.message}`,
+      severity: AuditSeverity.ERROR,
+      category: AuditCategory.ETL,
+      ...auditContext,
+    });
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Failed to trigger ETL sync',
+        message: error.message,
+        hint: 'Make sure the hospitalAPI server is running on the configured URL (default: http://127.0.0.1:4000)'
+      },
       { status: 500 }
     );
   }

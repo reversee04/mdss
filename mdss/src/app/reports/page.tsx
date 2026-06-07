@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { DashboardLayout } from '@/components/dashboard/dashboard-layout'
 import { FilterPanel } from '@/components/dashboard/filter-panel'
 import { LineChart, BarChart, PieChart } from '@/components/dashboard/charts'
@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   FileText,
   Download,
@@ -36,18 +37,102 @@ import {
   PieChartIcon,
   LineChartIcon,
   Save,
+  Trash2,
+  TableProperties
 } from 'lucide-react'
-import { savedReports, diseaseStats, generateTimeSeriesData, regionalData } from '@/lib/mock-data'
+import { diseaseStats, generateTimeSeriesData, regionalData } from '@/lib/mock-data'
+import { useToast } from '@/components/ui/use-toast'
 
 const timeSeriesData = generateTimeSeriesData(6)
 
 export default function ReportsPage() {
+  const { toast } = useToast()
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [selectedChartType, setSelectedChartType] = useState('line')
   const [isGenerating, setIsGenerating] = useState(false)
   const [reportName, setReportName] = useState('')
+  const [reportFormat, setReportFormat] = useState('csv')
+  const [scheduleEnabled, setScheduleEnabled] = useState(false)
+  const [scheduleFrequency, setScheduleFrequency] = useState('weekly')
+  
+  const [templates, setTemplates] = useState<any[]>([])
+  const [previewData, setPreviewData] = useState<any>(null)
+  const [loadingPreview, setLoadingPreview] = useState(false)
 
-  const handleGenerateCSV = async () => {
+  useEffect(() => {
+    fetchTemplates()
+    fetchPreview()
+  }, [])
+
+  const fetchPreview = async () => {
+    setLoadingPreview(true)
+    try {
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'json', filters: {}, reportName: 'preview' }),
+      })
+      const data = await res.json()
+      if (data.success) setPreviewData(data.data)
+    } catch (error) {
+      console.error('Preview load failed', error)
+    } finally {
+      setLoadingPreview(false)
+    }
+  }
+
+  const fetchTemplates = async () => {
+    try {
+      const res = await fetch('/api/reports/templates')
+      const data = await res.json()
+      if (data.success) {
+        setTemplates(data.data)
+      }
+    } catch (error) {
+      console.error('Failed to load templates', error)
+    }
+  }
+
+  const handleCreateTemplate = async () => {
+    try {
+      const res = await fetch('/api/reports/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template_name: reportName,
+          report_type: 'surveillance',
+          export_format: reportFormat,
+          schedule_enabled: scheduleEnabled,
+          schedule_frequency: scheduleFrequency,
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        toast({ title: 'Success', description: 'Report template saved.' })
+        setIsCreateDialogOpen(false)
+        fetchTemplates()
+      } else {
+        toast({ variant: 'destructive', title: 'Error', description: data.error })
+      }
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to create template.' })
+    }
+  }
+
+  const handleDeleteTemplate = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this template?')) return
+    try {
+      const res = await fetch(`/api/reports/templates/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        toast({ title: 'Success', description: 'Template deleted.' })
+        fetchTemplates()
+      }
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete template.' })
+    }
+  }
+
+  const handleGenerateReport = async (format: string, templateId: string | null = null) => {
     setIsGenerating(true)
     try {
       const response = await fetch('/api/reports', {
@@ -56,9 +141,10 @@ export default function ReportsPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          format: 'csv',
-          filters: {},
+          format,
+          filters: {}, // In a real app, gather from FilterPanel state
           reportName: reportName || 'surveillance-report',
+          templateId
         }),
       })
 
@@ -66,123 +152,33 @@ export default function ReportsPage() {
         throw new Error('Failed to generate report')
       }
 
+      // Read as blob for file download
       const blob = await response.blob()
+      
+      const fileExt = format === 'excel' ? 'xlsx' : format
+      
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${reportName || 'surveillance-report'}-${new Date().toISOString().split('T')[0]}.csv`
+      a.download = `${reportName || 'surveillance-report'}-${new Date().toISOString().split('T')[0]}.${fileExt}`
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
+      
+      toast({ title: 'Success', description: `Report exported as ${format.toUpperCase()}` })
     } catch (error) {
       console.error('Error generating report:', error)
-      alert('Failed to generate report. Please try again.')
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to generate report. Please try again.' })
     } finally {
       setIsGenerating(false)
     }
-  }
-
-  const handleGeneratePDF = async () => {
-    setIsGenerating(true)
-    try {
-      const response = await fetch('/api/reports', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          format: 'json',
-          filters: {},
-          reportName: reportName || 'surveillance-report',
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to generate report')
-      }
-
-      const data = await response.json()
-
-      // Create a simple HTML-based PDF
-      const htmlContent = generateHTMLReport(data.data, reportName || 'Surveillance Report')
-      const printWindow = window.open('', '_blank')
-      if (printWindow) {
-        printWindow.document.write(htmlContent)
-        printWindow.document.close()
-        printWindow.print()
-      }
-    } catch (error) {
-      console.error('Error generating report:', error)
-      alert('Failed to generate report. Please try again.')
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-  const generateHTMLReport = (data: any, title: string) => {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>${title}</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 40px; }
-          h1 { color: #333; }
-          h2 { color: #666; margin-top: 30px; }
-          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          th { background-color: #f4f4f4; }
-          .metadata { background-color: #f9f9f9; padding: 20px; margin-bottom: 20px; }
-          @media print { body { padding: 0; } }
-        </style>
-      </head>
-      <body>
-        <h1>${title}</h1>
-        <div class="metadata">
-          <p><strong>Generated:</strong> ${data.generatedAt}</p>
-          <p><strong>Filters:</strong> ${Object.entries(data.filters || {}).map(([k, v]) => `${k}: ${v || 'all'}`).join(', ')}</p>
-        </div>
-        
-        <h2>Encounter Statistics</h2>
-        <table>
-          <tr><th>Metric</th><th>Value</th></tr>
-          <tr><td>Total Encounters</td><td>${data.encounters?.totalEncounters || 0}</td></tr>
-          <tr><td>Average Duration (days)</td><td>${data.encounters?.avgDuration || 0}</td></tr>
-        </table>
-
-        <h2>Outcome Statistics</h2>
-        <table>
-          <tr><th>Outcome</th><th>Count</th></tr>
-          ${data.outcomes?.outcomeBreakdown?.map((o: any) => `<tr><td>${o.outcome}</td><td>${o.count}</td></tr>`).join('') || ''}
-        </table>
-
-        <h2>Disease Distribution</h2>
-        <table>
-          <tr><th>Disease</th><th>Count</th></tr>
-          ${data.diseases?.byDisease?.map((d: any) => `<tr><td>${d.disease}</td><td>${d.count}</td></tr>`).join('') || ''}
-        </table>
-
-        <h2>Age Distribution</h2>
-        <table>
-          <tr><th>Age Group</th><th>Count</th></tr>
-          ${Object.entries(data.demographics?.ageDistribution || {}).map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}
-        </table>
-
-        <h2>Gender Distribution</h2>
-        <table>
-          <tr><th>Gender</th><th>Count</th></tr>
-          ${data.demographics?.genderBreakdown?.map((g: any) => `<tr><td>${g.sex}</td><td>${g._count.sex}</td></tr>`).join('') || ''}
-        </table>
-      </body>
-      </html>
-    `
   }
 
   return (
     <div className="space-y-6 p-4 md:p-6 lg:p-8">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Reports</h1>
           <p className="text-muted-foreground">
@@ -193,19 +189,19 @@ export default function ReportsPage() {
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
-              New Report
+              New Template
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Create New Report</DialogTitle>
+              <DialogTitle>Create New Report Template</DialogTitle>
               <DialogDescription>
                 Configure a new report template for regular generation.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="reportName">Report Name</Label>
+                <Label htmlFor="reportName">Template Name</Label>
                 <Input
                   id="reportName"
                   placeholder="e.g., Monthly Malaria Summary"
@@ -214,41 +210,47 @@ export default function ReportsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="disease">Disease</Label>
-                <Select>
+                <Label htmlFor="format">Default Format</Label>
+                <Select value={reportFormat} onValueChange={setReportFormat}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select disease" />
+                    <SelectValue placeholder="Select format" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Diseases</SelectItem>
-                    <SelectItem value="hiv">HIV/AIDS</SelectItem>
-                    <SelectItem value="malaria">Malaria</SelectItem>
-                    <SelectItem value="tb">Tuberculosis</SelectItem>
-                    <SelectItem value="cholera">Cholera</SelectItem>
+                    <SelectItem value="csv">CSV</SelectItem>
+                    <SelectItem value="pdf">PDF</SelectItem>
+                    <SelectItem value="excel">Excel</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="frequency">Frequency</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select frequency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="daily">Daily</SelectItem>
-                    <SelectItem value="weekly">Weekly</SelectItem>
-                    <SelectItem value="monthly">Monthly</SelectItem>
-                    <SelectItem value="quarterly">Quarterly</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="flex items-center justify-between p-3 border rounded-lg">
+                <div className="space-y-0.5">
+                  <Label>Enable Schedule</Label>
+                  <p className="text-xs text-muted-foreground">Automatically generate this report</p>
+                </div>
+                <Switch checked={scheduleEnabled} onCheckedChange={setScheduleEnabled} />
               </div>
+              {scheduleEnabled && (
+                <div className="space-y-2">
+                  <Label htmlFor="frequency">Frequency</Label>
+                  <Select value={scheduleFrequency} onValueChange={setScheduleFrequency}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select frequency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={() => setIsCreateDialogOpen(false)}>
-                Create Report
+              <Button onClick={handleCreateTemplate}>
+                Save Template
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -258,12 +260,11 @@ export default function ReportsPage() {
       <Tabs defaultValue="generate" className="space-y-4">
         <TabsList>
           <TabsTrigger value="generate">Generate Report</TabsTrigger>
-          <TabsTrigger value="saved">Saved Reports</TabsTrigger>
+          <TabsTrigger value="saved">Saved Templates</TabsTrigger>
         </TabsList>
 
         {/* Generate Report Tab */}
         <TabsContent value="generate" className="space-y-6">
-          {/* Report Configuration */}
           <Card>
             <CardHeader>
               <CardTitle>Report Configuration</CardTitle>
@@ -285,24 +286,21 @@ export default function ReportsPage() {
                       size="sm"
                       onClick={() => setSelectedChartType('line')}
                     >
-                      <LineChartIcon className="h-4 w-4 mr-1" />
-                      Line
+                      <LineChartIcon className="h-4 w-4 mr-1" /> Line
                     </Button>
                     <Button
                       variant={selectedChartType === 'bar' ? 'default' : 'outline'}
                       size="sm"
                       onClick={() => setSelectedChartType('bar')}
                     >
-                      <BarChart3 className="h-4 w-4 mr-1" />
-                      Bar
+                      <BarChart3 className="h-4 w-4 mr-1" /> Bar
                     </Button>
                     <Button
                       variant={selectedChartType === 'pie' ? 'default' : 'outline'}
                       size="sm"
                       onClick={() => setSelectedChartType('pie')}
                     >
-                      <PieChartIcon className="h-4 w-4 mr-1" />
-                      Pie
+                      <PieChartIcon className="h-4 w-4 mr-1" /> Pie
                     </Button>
                   </div>
                 </div>
@@ -310,7 +308,6 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
 
-          {/* Preview Charts */}
           <Card>
             <CardHeader>
               <CardTitle>Report Preview</CardTitle>
@@ -352,31 +349,48 @@ export default function ReportsPage() {
                     <CardTitle className="text-base">Summary Statistics</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-3">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Total Cases</span>
-                        <span className="font-medium">45,672</span>
+                    {loadingPreview ? (
+                      <p className="text-sm text-muted-foreground">Loading preview...</p>
+                    ) : previewData ? (
+                      <div className="space-y-3">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Total Encounters</span>
+                          <span className="font-medium">{previewData.encounters?.totalEncounters?.toLocaleString() ?? '—'}</span>
+                        </div>
+                        {previewData.caseFatalityRate?.byDisease && Object.entries(previewData.caseFatalityRate.byDisease).slice(0, 3).map(([disease, cfr]: [string, any]) => (
+                          <div key={disease} className="flex justify-between">
+                            <span className="text-muted-foreground text-xs">{disease} CFR</span>
+                            <span className="font-medium text-red-600 text-sm">{cfr}%</span>
+                          </div>
+                        ))}
+                        {previewData.treatmentSuccessRate?.byDisease && Object.entries(previewData.treatmentSuccessRate.byDisease).slice(0, 3).map(([disease, tsr]: [string, any]) => (
+                          <div key={disease} className="flex justify-between">
+                            <span className="text-muted-foreground text-xs">{disease} TSR</span>
+                            <span className="font-medium text-green-600 text-sm">{tsr}%</span>
+                          </div>
+                        ))}
+                        <div className="mt-2 pt-2 border-t text-xs text-muted-foreground">
+                          Districts with data: {previewData.diseaseByDistrict?.length ? [...new Set(previewData.diseaseByDistrict.map((d: any) => d.district))].length : '—'}
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Total Deaths</span>
-                        <span className="font-medium text-red-600">1,234</span>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Total Cases</span>
+                          <span className="font-medium">45,672</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Total Deaths</span>
+                          <span className="font-medium text-red-600">1,234</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Recovery Rate</span>
-                        <span className="font-medium text-green-600">85.3%</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Avg. TSR</span>
-                        <span className="font-medium">87.2%</span>
-                      </div>
-                    </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
             </CardContent>
           </Card>
 
-          {/* Export Options */}
           <Card>
             <CardHeader>
               <CardTitle>Export Report</CardTitle>
@@ -384,25 +398,14 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-4">
-                <Button
-                  variant="outline"
-                  onClick={handleGenerateCSV}
-                  disabled={isGenerating}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  {isGenerating ? 'Generating...' : 'Export as CSV'}
+                <Button variant="outline" onClick={() => handleGenerateReport('csv')} disabled={isGenerating}>
+                  <Download className="mr-2 h-4 w-4" /> CSV
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleGeneratePDF}
-                  disabled={isGenerating}
-                >
-                  <FileText className="mr-2 h-4 w-4" />
-                  {isGenerating ? 'Generating...' : 'Export as PDF'}
+                <Button variant="outline" onClick={() => handleGenerateReport('pdf')} disabled={isGenerating}>
+                  <FileText className="mr-2 h-4 w-4" /> PDF
                 </Button>
-                <Button variant="outline">
-                  <Save className="mr-2 h-4 w-4" />
-                  Save Configuration
+                <Button variant="outline" onClick={() => handleGenerateReport('excel')} disabled={isGenerating}>
+                  <TableProperties className="mr-2 h-4 w-4" /> Excel
                 </Button>
               </div>
             </CardContent>
@@ -418,42 +421,49 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent>
               <DataTable
-                data={savedReports}
+                data={templates}
                 columns={[
-                  { key: 'name', header: 'Report Name' },
+                  { key: 'template_name', header: 'Template Name' },
                   {
-                    key: 'disease',
-                    header: 'Disease',
-                    render: (item) => <Badge variant="outline">{item.disease}</Badge>,
+                    key: 'export_format',
+                    header: 'Format',
+                    render: (item) => <Badge variant="outline" className="uppercase">{item.export_format}</Badge>,
                   },
-                  { key: 'frequency', header: 'Frequency' },
-                  {
-                    key: 'lastRun',
-                    header: 'Last Generated',
+                  { 
+                    key: 'schedule', 
+                    header: 'Schedule',
                     render: (item) => (
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        {item.lastRun}
-                      </span>
-                    ),
+                      item.schedule_enabled ? (
+                        <span className="flex items-center gap-1 text-sm">
+                          <Calendar className="h-3 w-3" />
+                          <span className="capitalize">{item.schedule_frequency}</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">None</span>
+                      )
+                    )
                   },
-                  { key: 'createdBy', header: 'Created By' },
+                  {
+                    key: 'created_at',
+                    header: 'Created',
+                    render: (item) => new Date(item.created_at).toLocaleDateString(),
+                  },
                   {
                     key: 'actions',
                     header: '',
-                    render: () => (
-                      <div className="flex gap-2">
-                        <Button variant="ghost" size="sm">
+                    render: (item) => (
+                      <div className="flex gap-2 justify-end">
+                        <Button variant="ghost" size="sm" onClick={() => handleGenerateReport(item.export_format, item.id)}>
                           Run Now
                         </Button>
-                        <Button variant="ghost" size="sm">
-                          Edit
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteTemplate(item.id)} className="text-red-500 hover:text-red-600">
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     ),
                   },
                 ]}
-                searchPlaceholder="Search saved reports..."
+                searchPlaceholder="Search saved templates..."
               />
             </CardContent>
           </Card>

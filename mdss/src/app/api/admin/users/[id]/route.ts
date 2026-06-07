@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { VALID_ROLES, validateRole } from '@/lib/roles';
+import { auth } from '../../../../../../auth';
+import { AuditAction, AuditCategory, AuditService, AuditSeverity, getAuditRequestContext } from '@/services/audit.service';
+
+function isAdmin(role?: string) {
+  return role === 'admin' || role === 'System Admin';
+}
 
 // PUT update user
 export async function PUT(
@@ -9,6 +15,14 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await auth();
+    if (!session?.user?.id || !isAdmin(session.user.role)) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized. Admin role required.' },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { name, email, password, role, status } = body;
@@ -66,6 +80,18 @@ export async function PUT(
       data: updateData,
     });
 
+    await AuditService.log({
+      userId: session.user.id,
+      action: role && role !== existingUser.role ? AuditAction.USER_ROLE_CHANGED : AuditAction.USER_UPDATED,
+      entityAffected: 'User',
+      entityId: user.user_id,
+      details: role && role !== existingUser.role
+        ? `Changed role for ${user.name} (${user.email}) from ${existingUser.role} to ${user.role}`
+        : `Updated user ${user.name} (${user.email})`,
+      category: AuditCategory.ADMIN,
+      ...getAuditRequestContext(request),
+    });
+
     return NextResponse.json({
       success: true,
       data: {
@@ -93,6 +119,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await auth();
+    if (!session?.user?.id || !isAdmin(session.user.role)) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized. Admin role required.' },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
@@ -109,6 +143,17 @@ export async function DELETE(
     // Delete user
     await prisma.user.delete({
       where: { user_id: id },
+    });
+
+    await AuditService.log({
+      userId: session.user.id,
+      action: AuditAction.USER_DELETED,
+      entityAffected: 'User',
+      entityId: existingUser.user_id,
+      details: `Deleted user ${existingUser.name} (${existingUser.email})`,
+      severity: AuditSeverity.WARNING,
+      category: AuditCategory.ADMIN,
+      ...getAuditRequestContext(request),
     });
 
     return NextResponse.json({

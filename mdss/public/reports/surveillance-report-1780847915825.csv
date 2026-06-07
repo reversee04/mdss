@@ -1,0 +1,103 @@
+Report Generated,2026-06-07T15:58:35.825Z
+Report Name,surveillance-report
+
+Filters
+
+Encounter Statistics
+Total Encounters,719
+Average Duration (days),0
+
+Disease Distribution
+Malaria,300
+Cholera,211
+HIV/AIDS,117
+Tuberculosis,91
+
+Disease by District Breakdown
+Disease,District,Total Cases,Recovered,Deaths,Ongoing,Unknown,Recovery Rate (%),Mortality Rate (%)
+Malaria,Salima,77,16,12,0,49,20.8,15.6
+Malaria,Kasungu,65,6,8,0,51,9.2,12.3
+Malaria,Mangochi,62,18,6,0,38,29,9.7
+Cholera,Zomba,55,11,9,0,35,20,16.4
+Cholera,Chikwawa,51,14,8,0,29,27.5,15.7
+Cholera,Blantyre,47,7,5,0,35,14.9,10.6
+Malaria,Lilongwe,17,2,4,0,11,11.8,23.5
+Malaria,Rumphi,17,2,3,0,12,11.8,17.6
+Malaria,Blantyre,16,6,2,0,8,37.5,12.5
+HIV/AIDS,Mangochi,16,1,2,0,13,6.3,12.5
+Tuberculosis,Zomba,16,4,2,0,10,25,12.5
+HIV/AIDS,Zomba,15,4,1,0,10,26.7,6.7
+Tuberculosis,Blantyre,14,6,3,0,5,42.9,21.4
+HIV/AIDS,Salima,13,2,3,0,8,15.4,23.1
+Malaria,Mzimba,13,4,3,0,6,30.8,23.1
+HIV/AIDS,Lilongwe,13,2,2,0,9,15.4,15.4
+HIV/AIDS,Chikwawa,13,2,0,0,11,15.4,0
+Tuberculosis,Mangochi,12,2,2,0,8,16.7,16.7
+Malaria,Karonga,12,1,2,0,9,8.3,16.7
+HIV/AIDS,Mzimba,11,4,1,0,6,36.4,9.1
+HIV/AIDS,Kasungu,11,2,2,0,7,18.2,18.2
+Malaria,Zomba,11,1,2,0,8,9.1,18.2
+Cholera,Mangochi,11,1,1,0,9,9.1,9.1
+HIV/AIDS,Karonga,11,1,0,0,10,9.1,0
+Tuberculosis,Lilongwe,10,0,0,0,10,0,0
+Malaria,Chikwawa,10,3,2,0,5,30,20
+Cholera,Kasungu,10,2,2,0,6,20,20
+Tuberculosis,Chikwawa,9,4,2,0,3,44.4,22.2
+Cholera,Lilongwe,9,0,3,0,6,0,33.3
+Cholera,Karonga,9,2,2,0,5,22.2,22.2
+Tuberculosis,Rumphi,9,4,0,0,5,44.4,0
+Cholera,Salima,8,0,0,0,8,0,0
+HIV/AIDS,Rumphi,8,1,3,0,4,12.5,37.5
+Cholera,Mzimba,7,1,1,0,5,14.3,14.3
+Tuberculosis,Kasungu,6,2,1,0,3,33.3,16.7
+Tuberculosis,Salima,6,4,0,0,2,66.7,0
+HIV/AIDS,Blantyre,6,0,0,0,6,0,0
+Tuberculosis,Mzimba,5,1,1,0,3,20,20
+Cholera,Rumphi,4,2,1,0,1,50,25
+Tuberculosis,Karonga,4,2,1,0,1,50,25
+
+Outcome Statistics by Disease
+Disease,Recovered,Deaths,Ongoing,Unknown,Treatment Failure,Lost to Follow-up,Recovery Rate (%),Mortality Rate (%)
+Malaria,59,44,0,197,0,0,19.7,14.7
+Cholera,40,32,0,139,0,0,19,15.2
+HIV/AIDS,19,14,0,84,0,0,16.2,12
+Tuberculosis,29,12,0,50,0,0,31.9,13.2
+
+Outcome Statistics by District
+District,Recovered,Deaths,Ongoing,Unknown,Recovery Rate (%),Mortality Rate (%)
+Salima,22,15,0,67,21.2,14.4
+Mangochi,22,11,0,68,21.8,10.9
+Zomba,20,14,0,63,20.6,14.4
+Kasungu,12,13,0,67,13,14.1
+Chikwawa,23,12,0,48,27.7,14.5
+Blantyre,19,10,0,54,22.9,12
+Lilongwe,4,9,0,36,8.2,18.4
+Rumphi,9,7,0,22,23.7,18.4
+Mzimba,10,6,0,20,27.8,16.7
+Karonga,6,5,0,25,16.7,13.9
+
+Case Fatality Rate (CFR) by Disease
+Disease,CFR (%)
+HIV/AIDS,11.97
+Malaria,14.67
+Cholera,15.17
+Tuberculosis,13.19
+
+Treatment Success Rate (TSR) by Disease
+Disease,TSR (%)
+HIV/AIDS,16.24
+Malaria,19.67
+Cholera,18.96
+Tuberculosis,31.87
+
+Age Distribution
+0-17,71
+18-35,77
+36-50,67
+51-65,72
+66+,64
+
+Gender Distribution
+MALE,176
+OTHER,1
+FEMALE,174

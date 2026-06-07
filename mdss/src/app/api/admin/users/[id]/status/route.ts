@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { auth } from '../../../../../../../auth';
+import { AuditAction, AuditCategory, AuditService, AuditSeverity, getAuditRequestContext } from '@/services/audit.service';
+
+function isAdmin(role?: string) {
+  return role === 'admin' || role === 'System Admin';
+}
 
 // PATCH toggle user status (activate/deactivate)
 export async function PATCH(
@@ -7,6 +13,14 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const session = await auth();
+    if (!session?.user?.id || !isAdmin(session.user.role)) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized. Admin role required.' },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { status } = body;
@@ -34,6 +48,17 @@ export async function PATCH(
     const user = await prisma.user.update({
       where: { user_id: id },
       data: { status },
+    });
+
+    await AuditService.log({
+      userId: session.user.id,
+      action: AuditAction.USER_STATUS_CHANGED,
+      entityAffected: 'User',
+      entityId: user.user_id,
+      details: `Changed status for ${user.name} (${user.email}) from ${existingUser.status} to ${user.status}`,
+      severity: status === 'inactive' ? AuditSeverity.WARNING : AuditSeverity.INFO,
+      category: AuditCategory.ADMIN,
+      ...getAuditRequestContext(request),
     });
 
     return NextResponse.json({

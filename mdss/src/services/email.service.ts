@@ -4,16 +4,17 @@ interface EmailConfig {
   to: string[];
   subject: string;
   html: string;
+  attachments?: { filename: string; path: string }[];
 }
 
 export async function sendEmail(config: EmailConfig): Promise<void> {
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
+    host: process.env.SMTP_HOST || 'smtp.mailtrap.io',
+    port: parseInt(process.env.SMTP_PORT || '2525'),
     secure: false,
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
+      user: process.env.SMTP_USER || 'test',
+      pass: process.env.SMTP_PASSWORD || 'test',
     },
   });
 
@@ -22,6 +23,7 @@ export async function sendEmail(config: EmailConfig): Promise<void> {
     to: config.to.join(', '),
     subject: config.subject,
     html: config.html,
+    attachments: config.attachments,
   });
 }
 

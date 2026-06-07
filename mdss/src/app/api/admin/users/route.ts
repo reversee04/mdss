@@ -2,10 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { VALID_ROLES, validateRole } from '@/lib/roles';
+import { auth } from '../../../../../auth';
+import { AuditAction, AuditCategory, AuditService, getAuditRequestContext } from '@/services/audit.service';
+
+function isAdmin(role?: string) {
+  return role === 'admin' || role === 'System Admin';
+}
 
 // GET all users
 export async function GET() {
   try {
+    const session = await auth();
+    if (!session?.user?.id || !isAdmin(session.user.role)) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized. Admin role required.' },
+        { status: 403 }
+      );
+    }
+
     const users = await prisma.user.findMany({
       orderBy: { created_at: 'desc' },
     });
@@ -34,6 +48,14 @@ export async function GET() {
 // POST create new user
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id || !isAdmin(session.user.role)) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized. Admin role required.' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const { name, email, password, role, facility } = body;
 
@@ -84,6 +106,16 @@ export async function POST(request: NextRequest) {
         role,
         status: 'active',
       },
+    });
+
+    await AuditService.log({
+      userId: session.user.id,
+      action: AuditAction.USER_CREATED,
+      entityAffected: 'User',
+      entityId: user.user_id,
+      details: `Created user ${user.name} (${user.email}) with role ${user.role}`,
+      category: AuditCategory.ADMIN,
+      ...getAuditRequestContext(request),
     });
 
     return NextResponse.json({

@@ -859,6 +859,244 @@ export async function getFacilityComparison(filters?: AnalyticsFilters) {
   return rows.sort((a, b) => b.totalEncounters - a.totalEncounters);
 }
 
+/**
+ * DISEASE BY DISTRICT BREAKDOWN
+ * Cross-tabulation of diseases across all districts with case counts and outcome breakdown
+ */
+export async function getDiseaseByDistrict(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
+
+  if (allowedDiseaseIds.length === 0) return [];
+
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
+  const encounters = await prisma.encounter.findMany({
+    where: encounterWhere,
+    select: {
+      outcome: true,
+      disease: { select: { disease_name: true } },
+      facility: { select: { district: true } },
+    },
+  });
+
+  // Aggregate by disease + district
+  const map: Record<string, {
+    disease: string;
+    district: string;
+    total_cases: number;
+    recovered: number;
+    deaths: number;
+    ongoing: number;
+    unknown: number;
+  }> = {};
+
+  encounters.forEach((enc) => {
+    const disease = canonicalDiseaseName(enc.disease.disease_name);
+    const district = enc.facility.district || "Unknown";
+    const key = `${disease}__${district}`;
+
+    if (!map[key]) {
+      map[key] = { disease, district, total_cases: 0, recovered: 0, deaths: 0, ongoing: 0, unknown: 0 };
+    }
+
+    const cat = outcomeCategory(enc.outcome) as "recovered" | "deaths" | "ongoing" | "unknown";
+    map[key].total_cases++;
+    map[key][cat]++;
+  });
+
+  return Object.values(map).map((row) => {
+    const total = row.total_cases || 1;
+    return {
+      disease: row.disease,
+      district: row.district,
+      total_cases: row.total_cases,
+      outcomes: {
+        recovered: row.recovered,
+        deaths: row.deaths,
+        ongoing: row.ongoing,
+        unknown: row.unknown,
+      },
+      recovery_rate: Number(((row.recovered / total) * 100).toFixed(1)),
+      mortality_rate: Number(((row.deaths / total) * 100).toFixed(1)),
+    };
+  }).sort((a, b) => b.total_cases - a.total_cases);
+}
+
+/**
+ * COMPREHENSIVE OUTCOME STATISTICS
+ * Outcome breakdown by disease, district, and facility
+ */
+export async function getOutcomeStatistics(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
+  if (allowedDiseaseIds.length === 0) return { byDisease: [], byDistrict: [], byFacility: [] };
+
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
+  const encounters = await prisma.encounter.findMany({
+    where: encounterWhere,
+    select: {
+      outcome: true,
+      disease: { select: { disease_name: true } },
+      facility: { select: { district: true, name: true } },
+    },
+  });
+
+  // Aggregation helpers
+  type OutcomeRow = {
+    label: string;
+    recovered: number; deaths: number; ongoing: number; unknown: number;
+    treatment_failure: number; lost_to_followup: number; total: number;
+    recovery_rate: number; mortality_rate: number;
+  };
+
+  function emptyRow(label: string): OutcomeRow {
+    return { label, recovered: 0, deaths: 0, ongoing: 0, unknown: 0, treatment_failure: 0, lost_to_followup: 0, total: 0, recovery_rate: 0, mortality_rate: 0 };
+  }
+
+  const diseaseMap: Record<string, OutcomeRow> = {};
+  const districtMap: Record<string, OutcomeRow> = {};
+  const facilityMap: Record<string, OutcomeRow> = {};
+
+  encounters.forEach((enc) => {
+    const disease = canonicalDiseaseName(enc.disease.disease_name);
+    const district = enc.facility.district || "Unknown";
+    const facility = enc.facility.name || "Unknown";
+    const normalized = enc.outcome?.trim().toLowerCase() || "unknown";
+
+    // Categorize outcome — extended version
+    let cat: keyof Omit<OutcomeRow, "label" | "total" | "recovery_rate" | "mortality_rate"> = "unknown";
+    if (["recovered", "recovery", "discharged recovered"].includes(normalized)) cat = "recovered";
+    else if (["dead", "death", "died", "deceased"].includes(normalized)) cat = "deaths";
+    else if (["ongoing", "active", "on treatment", "admitted", "in treatment"].includes(normalized)) cat = "ongoing";
+    else if (["treatment failure"].includes(normalized)) cat = "treatment_failure";
+    else if (["lost to follow-up", "ltfu", "lost to followup"].includes(normalized)) cat = "lost_to_followup";
+
+    [
+      { map: diseaseMap, key: disease },
+      { map: districtMap, key: district },
+      { map: facilityMap, key: facility },
+    ].forEach(({ map, key }) => {
+      if (!map[key]) map[key] = emptyRow(key);
+      map[key][cat]++;
+      map[key].total++;
+    });
+  });
+
+  function finalise(row: OutcomeRow) {
+    const total = row.total || 1;
+    row.recovery_rate = Number(((row.recovered / total) * 100).toFixed(1));
+    row.mortality_rate = Number(((row.deaths / total) * 100).toFixed(1));
+    return row;
+  }
+
+  return {
+    byDisease: Object.values(diseaseMap).map(finalise).sort((a, b) => b.total - a.total),
+    byDistrict: Object.values(districtMap).map(finalise).sort((a, b) => b.total - a.total),
+    byFacility: Object.values(facilityMap).map(finalise).sort((a, b) => b.total - a.total),
+  };
+}
+
+/**
+ * CASE FATALITY RATE (CFR)
+ * deaths / total_cases, by disease and by district
+ */
+export async function getCaseFatalityRate(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
+  if (allowedDiseaseIds.length === 0) return { byDisease: {}, byDistrict: {} };
+
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
+  const encounters = await prisma.encounter.findMany({
+    where: encounterWhere,
+    select: {
+      outcome: true,
+      disease: { select: { disease_name: true } },
+      facility: { select: { district: true } },
+    },
+  });
+
+  const diseaseStats: Record<string, { total: number; deaths: number }> = {};
+  const districtStats: Record<string, { total: number; deaths: number }> = {};
+
+  encounters.forEach((enc) => {
+    const disease = canonicalDiseaseName(enc.disease.disease_name);
+    const district = enc.facility.district || "Unknown";
+    const isDeath = outcomeCategory(enc.outcome) === "deaths";
+
+    if (!diseaseStats[disease]) diseaseStats[disease] = { total: 0, deaths: 0 };
+    diseaseStats[disease].total++;
+    if (isDeath) diseaseStats[disease].deaths++;
+
+    if (!districtStats[district]) districtStats[district] = { total: 0, deaths: 0 };
+    districtStats[district].total++;
+    if (isDeath) districtStats[district].deaths++;
+  });
+
+  const calcCFR = (stats: Record<string, { total: number; deaths: number }>) =>
+    Object.fromEntries(
+      Object.entries(stats).map(([key, { total, deaths }]) => [
+        key,
+        Number(((deaths / (total || 1)) * 100).toFixed(2)),
+      ])
+    );
+
+  return {
+    byDisease: calcCFR(diseaseStats),
+    byDistrict: calcCFR(districtStats),
+  };
+}
+
+/**
+ * TREATMENT SUCCESS RATE (TSR)
+ * recovered / total_cases, by disease and by district
+ */
+export async function getTreatmentSuccessRate(filters?: AnalyticsFilters) {
+  const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
+  if (allowedDiseaseIds.length === 0) return { byDisease: {}, byDistrict: {} };
+
+  const encounterWhere = buildEncounterFilter(allowedDiseaseIds, filters);
+
+  const encounters = await prisma.encounter.findMany({
+    where: encounterWhere,
+    select: {
+      outcome: true,
+      disease: { select: { disease_name: true } },
+      facility: { select: { district: true } },
+    },
+  });
+
+  const diseaseStats: Record<string, { total: number; recovered: number }> = {};
+  const districtStats: Record<string, { total: number; recovered: number }> = {};
+
+  encounters.forEach((enc) => {
+    const disease = canonicalDiseaseName(enc.disease.disease_name);
+    const district = enc.facility.district || "Unknown";
+    const isRecovered = outcomeCategory(enc.outcome) === "recovered";
+
+    if (!diseaseStats[disease]) diseaseStats[disease] = { total: 0, recovered: 0 };
+    diseaseStats[disease].total++;
+    if (isRecovered) diseaseStats[disease].recovered++;
+
+    if (!districtStats[district]) districtStats[district] = { total: 0, recovered: 0 };
+    districtStats[district].total++;
+    if (isRecovered) districtStats[district].recovered++;
+  });
+
+  const calcTSR = (stats: Record<string, { total: number; recovered: number }>) =>
+    Object.fromEntries(
+      Object.entries(stats).map(([key, { total, recovered }]) => [
+        key,
+        Number(((recovered / (total || 1)) * 100).toFixed(2)),
+      ])
+    );
+
+  return {
+    byDisease: calcTSR(diseaseStats),
+    byDistrict: calcTSR(districtStats),
+  };
+}
+
+
 function emptyAlertStatistics() {
   return {
     total: 0,

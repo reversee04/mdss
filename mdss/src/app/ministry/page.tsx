@@ -120,7 +120,7 @@ export default function MinistryDashboardPage() {
           </p>
           <p className="mt-1 text-xs text-muted-foreground">{getTimestampLabel(data.timestamp)}</p>
         </div>
-        <div className="flex gap-2">
+        {/* <div className="flex gap-2">
           <Button variant="outline">
             <Calendar className="mr-2 h-4 w-4" />
             Live Data
@@ -129,7 +129,7 @@ export default function MinistryDashboardPage() {
             <Download className="mr-2 h-4 w-4" />
             Export Report
           </Button>
-        </div>
+        </div> */}
       </div>
 
       {/* Alert Banner */}
@@ -376,7 +376,7 @@ export default function MinistryDashboardPage() {
       </div>
 
       {/* Quick Actions */}
-      <Card>
+      {/* <Card>
         <CardHeader>
           <CardTitle>Quick Actions</CardTitle>
           <CardDescription>Generate reports and access key documents</CardDescription>
@@ -397,7 +397,7 @@ export default function MinistryDashboardPage() {
             </Button>
           </div>
         </CardContent>
-      </Card>
+      </Card> */}
     </div>
   )
 }

@@ -85,28 +85,28 @@ export default function ETLMonitoringPage() {
   const handleRunAllPipelines = async () => {
     setSyncing(true);
     try {
-      // Trigger the sync endpoint
-      const response = await fetch('http://127.0.0.1:4000/api/sync', {
+      // Trigger the sync endpoint via MDSS API (proxies to hospitalAPI)
+      const response = await fetch('/api/admin/etl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          patients: [],
-          encounters: [],
-          diseases: [],
-          facilities: []
-        })
       });
 
-      if (response.ok) {
+      const result = await response.json();
+
+      if (result.success) {
         // Refresh ETL data after sync
         const etlResponse = await fetch('/api/admin/etl');
         const etlData = await etlResponse.json();
         if (etlData.success) {
           setEtlData(etlData.data);
         }
+      } else {
+        console.error('Failed to run pipelines:', result.error);
+        alert(`Failed to run pipelines: ${result.message}`);
       }
     } catch (error) {
       console.error('Failed to run pipelines:', error);
+      alert('Failed to run pipelines. Please check if the hospitalAPI server is running.');
     } finally {
       setSyncing(false);
     }

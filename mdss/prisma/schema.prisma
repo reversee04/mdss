@@ -100,6 +100,64 @@ model User {
   audit_logs    AuditLog[]
   settings      UserSettings?
   notifications NotificationPreferences?
+  report_templates ReportTemplate[]
+  generated_reports GeneratedReport[]
+}
+
+model ReportTemplate {
+  id                String   @id @default(cuid())
+  template_name     String   @unique @db.VarChar(200)
+  user_id           String
+  user              User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  
+  // Configuration
+  report_type       String   @db.VarChar(50) // surveillance, outbreak, compliance, custom
+  filters           Json     // Stored as JSON object
+  chart_config      Json     // Chart type, colors, layout
+  export_format     String   @default("csv") // csv, pdf, excel, json
+  
+  // Scheduling
+  schedule_enabled  Boolean  @default(false)
+  schedule_frequency String?  // daily, weekly, monthly, quarterly
+  schedule_day      Int?     // Day of week/month
+  schedule_time     String?  @db.VarChar(10) // HH:MM format
+  next_run          DateTime?
+  last_run          DateTime?
+  
+  // Sharing
+  is_public         Boolean  @default(false)
+  shared_with       String[] @default([]) // Array of user_ids
+  
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  
+  generated_reports GeneratedReport[]
+}
+
+model GeneratedReport {
+  id                String   @id @default(cuid())
+  template_id       String?
+  template          ReportTemplate? @relation(fields: [template_id], references: [id], onDelete: SetNull)
+  user_id           String
+  user              User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+  
+  // Report Details
+  report_name       String   @db.VarChar(200)
+  report_type       String   @db.VarChar(50)
+  file_path         String   @db.VarChar(500)
+  file_size         BigInt
+  format            String   @db.VarChar(20) // csv, pdf, excel, json
+  
+  // Metadata
+  filters_used      Json
+  generated_at      DateTime @default(now())
+  expires_at        DateTime?
+  
+  // Statistics
+  download_count    Int      @default(0)
+  last_downloaded   DateTime?
+  
+  created_at        DateTime @default(now())
 }
 
 model UserSettings {
@@ -223,13 +281,24 @@ model OutbreakAlert {
 
 model AuditLog {
   log_id          String   @id @db.VarChar(50)
-  user_id         String   @db.VarChar(50)
-  action          String
-  entity_affected String
+  user_id         String?  @db.VarChar(50)
+  action          String   @db.VarChar(100)
+  entity_affected String   @db.VarChar(100)
+  entity_id       String?  @db.VarChar(100)
   timestamp       DateTime @default(now())
   details         String?  @db.Text
+  ip_address      String?  @db.VarChar(45)
+  user_agent      String?  @db.VarChar(500)
+  severity        String   @default("info") @db.VarChar(20)
+  category        String   @default("general") @db.VarChar(50)
+  created_at      DateTime @default(now())
 
-  user User @relation(fields: [user_id], references: [user_id])
+  user User? @relation(fields: [user_id], references: [user_id], onDelete: SetNull)
+
+  @@index([timestamp])
+  @@index([category])
+  @@index([severity])
+  @@index([user_id])
 }
 
 //ENUMS
