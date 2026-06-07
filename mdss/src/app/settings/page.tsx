@@ -218,7 +218,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <DashboardLayout role="admin">
+    <DashboardLayout>
       <div className="space-y-6">
         {/* Page Header */}
         <div>

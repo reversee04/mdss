@@ -185,7 +185,7 @@ export default function AlertsPage() {
   )
 
   return (
-    <DashboardLayout role="analyst">
+    <DashboardLayout>
       <div className="space-y-6">
         {/* Page Header */}
         <div className="flex items-center justify-between">

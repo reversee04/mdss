@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { signOut } from 'next-auth/react'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
@@ -31,12 +32,17 @@ import {
 } from '@/components/ui/collapsible'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 type UserRole = 'admin' | 'analyst' | 'ministry'
 
 interface SidebarNavProps {
   role: UserRole
+}
+
+interface SessionUser {
+  name?: string | null
+  email?: string | null
 }
 
 const adminNav = [
@@ -95,6 +101,41 @@ export function SidebarNav({ role }: SidebarNavProps) {
   const pathname = usePathname()
   const navItems = navConfig[role]
   const [openItems, setOpenItems] = useState<string[]>([])
+  const [user, setUser] = useState<SessionUser | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function fetchSessionUser() {
+      try {
+        const response = await fetch('/api/auth/session')
+        const session = await response.json()
+        if (!cancelled) {
+          setUser(session?.user ?? null)
+        }
+      } catch (error) {
+        console.error('Failed to fetch sidebar user:', error)
+        if (!cancelled) setUser(null)
+      }
+    }
+
+    fetchSessionUser()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const userInitials = useMemo(() => {
+    const displayName = user?.name || user?.email || 'User'
+    return displayName
+      .split(/[.\s@_-]+/)
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase()
+  }, [user])
 
   const toggleItem = (title: string) => {
     setOpenItems((prev) =>
@@ -203,21 +244,21 @@ export function SidebarNav({ role }: SidebarNavProps) {
       {/* User Section */}
       <div className="border-t border-sidebar-border p-4">
         <div className="flex items-center gap-3 mb-3">
-          <UserCircle className="h-10 w-10 text-sidebar-foreground/70" />
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
+            {userInitials || <UserCircle className="h-6 w-6" />}
+          </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">Dr. Grace Banda</p>
-            <p className="text-xs text-sidebar-foreground/70 truncate">g.banda@health.gov.mw</p>
+            <p className="text-sm font-medium truncate">{user?.name || 'Signed-in user'}</p>
+            <p className="text-xs text-sidebar-foreground/70 truncate">{user?.email || 'Loading account...'}</p>
           </div>
         </div>
         <Button
           variant="ghost"
           className="w-full justify-start text-sidebar-foreground hover:bg-sidebar-accent"
-          asChild
+          onClick={() => signOut({ callbackUrl: '/login' })}
         >
-          <Link href="/login">
-            <LogOut className="mr-3 h-4 w-4" />
-            Sign Out
-          </Link>
+          <LogOut className="mr-3 h-4 w-4" />
+          Sign Out
         </Button>
       </div>
     </div>
