@@ -1,6 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+const FOCUS_DISEASE_CODE_BY_NAME: Record<string, string> = {
+  "hiv/aids": "B20",
+  malaria: "B50",
+  tuberculosis: "A15",
+  cholera: "A00",
+};
+
+function diseaseCodeFor(sourceDisease: any): string | null {
+  const diseaseName = String(sourceDisease.name || "").toLowerCase();
+  if (diseaseName.startsWith("malaria")) return sourceDisease.icd10Code || sourceDisease.icdCode || "B50";
+  return sourceDisease.icd10Code || sourceDisease.icdCode || FOCUS_DISEASE_CODE_BY_NAME[diseaseName] || null;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -9,19 +22,35 @@ export async function POST(req: Request) {
     // We increase the timeout to 30 seconds for large syncs
     await prisma.$transaction(
       async (tx) => {
+        const diseaseIdMap = new Map<string, string>();
+
         // STEP 1: Sync Diseases (Must happen first)
         if (diseases && diseases.length > 0) {
           for (const d of diseases) {
-            await tx.disease.upsert({
-              where: { disease_id: d.id },
-              update: { disease_name: d.name },
-              create: { disease_id: d.id, disease_name: d.name },
-            });
+            const icd10Code = diseaseCodeFor(d);
+            const disease = icd10Code
+              ? await tx.disease.upsert({
+                where: { icd10Code },
+                update: {
+                  disease_name: d.name,
+                },
+                create: {
+                  icd10Code,
+                  disease_name: d.name,
+                },
+              })
+              : (await tx.disease.findFirst({
+                where: { disease_name: { equals: d.name, mode: "insensitive" } },
+              })) || await tx.disease.create({
+                data: { disease_name: d.name },
+              });
+
+            diseaseIdMap.set(d.id, disease.disease_id);
           }
         }
 
         // STEP 2: Create a safety fallback for missing diagnoses
-        await tx.disease.upsert({
+        const unknownDisease = await tx.disease.upsert({
           where: { disease_id: "UNKNOWN" },
           update: {},
           create: {
@@ -73,11 +102,16 @@ export async function POST(req: Request) {
         // STEP 5: Sync Encounters
         for (const e of encounters) {
           // Find the diseaseId from the sender's nested diagnoses
-          const diseaseId = e.diagnoses?.[0]?.diseaseId || "UNKNOWN";
+          const sourceDiseaseId = e.diagnoses?.[0]?.diseaseId;
+          const existingDisease = sourceDiseaseId
+            ? await tx.disease.findUnique({ where: { disease_id: sourceDiseaseId } })
+            : null;
+          const diseaseId = (sourceDiseaseId && (diseaseIdMap.get(sourceDiseaseId) || existingDisease?.disease_id)) || unknownDisease.disease_id;
 
           await tx.encounter.upsert({
             where: { encounter_id: e.id },
             update: {
+              disease_id: diseaseId,
               outcome: e.outcome?.result || "PENDING",
               discharge_date: e.dischargedAt ? new Date(e.dischargedAt) : null,
             },

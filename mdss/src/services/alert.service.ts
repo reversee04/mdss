@@ -51,7 +51,9 @@ const DISTRICT_POPULATION: Record<string, number> = {
   Zomba: 1050000,
 };
 
-const FOCUS_DISEASE_IDS = ['hiv', 'malaria', 'tb', 'cholera'];
+const FOCUS_DISEASE_CODES = ['B20', 'B50', 'A15', 'A00'];
+const FOCUS_DISEASE_NAMES = ['HIV/AIDS', 'Malaria', 'Malaria (P. falciparum)', 'Tuberculosis', 'Cholera'];
+const FOCUS_DISEASE_SIMPLE_IDS = ['hiv', 'malaria', 'tb', 'cholera'];
 
 /**
  * Calculate cases per 100,000 population
@@ -276,7 +278,11 @@ export async function monitorAllDiseases(): Promise<MonitoringResult[]> {
   const diseases = await prisma.disease.findMany({
     where: {
       monitoring_enabled: true,
-      disease_id: { in: FOCUS_DISEASE_IDS }
+      OR: [
+        { icd10Code: { in: FOCUS_DISEASE_CODES } },
+        { disease_name: { in: FOCUS_DISEASE_NAMES } },
+        { disease_id: { in: FOCUS_DISEASE_SIMPLE_IDS } },
+      ],
     },
     select: { disease_id: true, disease_name: true },
   });

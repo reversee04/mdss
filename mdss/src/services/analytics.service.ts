@@ -14,7 +14,15 @@ export interface AnalyticsFilters {
   sort?: string;
 }
 
-const FOCUS_DISEASE_NAMES = ['HIV/AIDS', 'Malaria', 'Tuberculosis', 'Cholera'];
+const FOCUS_DISEASE_CODES = ["B20", "B50", "A15", "A00"];
+const FOCUS_DISEASE_NAMES = ["HIV/AIDS", "Malaria", "Malaria (P. falciparum)", "Tuberculosis", "Cholera"];
+const FOCUS_DISEASE_SIMPLE_IDS = ["hiv", "malaria", "tb", "cholera"];
+
+function canonicalDiseaseName(name?: string | null) {
+  if (!name) return "Unknown";
+  if (name.toLowerCase().startsWith("malaria")) return "Malaria";
+  return name;
+}
 
 interface DashboardAlert {
   alert_id: string;
@@ -96,16 +104,21 @@ export function buildEncounterFilter(allowedDiseaseIds: string[], filters?: Anal
     disease_id: { in: allowedDiseaseIds }
   };
 
+  console.debug(`[Analytics] Building encounter filter for ${allowedDiseaseIds.length} diseases:`, allowedDiseaseIds);
+
   // Build facility filter conditions
   const facilityConditions: any = {};
 
   if (filters?.location && filters.location !== 'all') {
+    console.debug(`[Analytics] Adding location filter:`, filters.location);
     facilityConditions.district = { equals: filters.location, mode: 'insensitive' };
   }
   if (filters?.district && filters.district !== 'all') {
+    console.debug(`[Analytics] Adding district filter:`, filters.district);
     facilityConditions.district = { equals: filters.district, mode: 'insensitive' };
   }
   if (filters?.region && filters.region !== 'all') {
+    console.debug(`[Analytics] Adding region filter:`, filters.region);
     facilityConditions.region = { equals: filters.region, mode: 'insensitive' };
   }
 
@@ -114,13 +127,17 @@ export function buildEncounterFilter(allowedDiseaseIds: string[], filters?: Anal
     where.facility = facilityConditions;
   }
   if (filters?.facility && filters.facility !== 'all') {
+    console.debug(`[Analytics] Adding facility filter:`, filters.facility);
     where.facility_id = filters.facility;
   }
   if (filters?.startDate || filters?.endDate) {
+    console.debug(`[Analytics] Adding date range filter:`, { startDate: filters.startDate, endDate: filters.endDate });
     where.date_of_diagnosis = {};
     if (filters.startDate) where.date_of_diagnosis.gte = new Date(filters.startDate);
     if (filters.endDate) where.date_of_diagnosis.lte = new Date(filters.endDate);
   }
+
+  console.debug(`[Analytics] Final encounter filter:`, JSON.stringify(where, null, 2));
 
   return where;
 }
@@ -146,32 +163,84 @@ const ageBandFor = (dateOfBirth: Date, referenceDate = new Date()) => {
 
 /**
  * Helper function: Dynamically fetch disease IDs from database
- * Looks up the 4 focused diseases by name
+ * Looks up the 4 focused diseases by ICD-10 code so filters use the canonical
+ * UUID-backed disease records shared with hospitalAPI.
  */
 async function getDynamicDiseaseIds(filters?: AnalyticsFilters): Promise<string[]> {
-  const focusedDiseases = ['HIV/AIDS', 'Malaria', 'Tuberculosis', 'Cholera'];
+  const focusedDiseaseWhere = {
+    OR: [
+      { icd10Code: { in: FOCUS_DISEASE_CODES } },
+      { disease_name: { in: FOCUS_DISEASE_NAMES } },
+      { disease_id: { in: FOCUS_DISEASE_SIMPLE_IDS } },
+    ],
+  };
 
-  const whereClause: any = {};
+  if (filters?.disease && filters.disease !== "all") {
+    console.debug(`[Analytics] Filtering by selected disease_id: ${filters.disease}`);
 
-  if (filters?.disease && filters.disease !== 'all') {
-    // When a specific disease is selected, filter by disease_id
-    whereClause.disease_id = filters.disease;
-  } else {
-    // Otherwise, use the focused diseases list
-    whereClause.disease_name = {
-      in: focusedDiseases,
-    };
+    const selectedDisease = await prisma.disease.findFirst({
+      where: {
+        disease_id: filters.disease,
+        ...focusedDiseaseWhere,
+      },
+      select: {
+        disease_id: true,
+        disease_name: true,
+        icd10Code: true,
+      },
+    });
+
+    if (!selectedDisease) {
+      console.warn(`[Analytics] Selected disease is not a focused disease: ${filters.disease}`);
+      return [];
+    }
+
+    const relatedDiseases = await prisma.disease.findMany({
+      where: {
+        OR: [
+          ...(selectedDisease.icd10Code ? [{ icd10Code: selectedDisease.icd10Code }] : []),
+          { disease_name: { equals: selectedDisease.disease_name, mode: "insensitive" } },
+          { disease_id: selectedDisease.disease_id },
+        ],
+      },
+      select: {
+        disease_id: true,
+        disease_name: true,
+      },
+    });
+
+    console.debug(`[Analytics] Found ${relatedDiseases.length} selected/related diseases:`, relatedDiseases.map(d => `${d.disease_name}(${d.disease_id})`));
+    return Array.from(new Set(relatedDiseases.map((disease) => disease.disease_id)));
   }
 
+  console.debug(`[Analytics] Filtering by focused disease ICD-10 codes with legacy fallback: ${FOCUS_DISEASE_CODES.join(', ')}`);
+
   const diseases = await prisma.disease.findMany({
-    where: whereClause,
+    where: focusedDiseaseWhere,
     select: {
       disease_id: true,
       disease_name: true,
     },
   });
 
-  return diseases.map((d) => d.disease_id);
+  console.debug(`[Analytics] Found ${diseases.length} diseases:`, diseases.map(d => `${d.disease_name}(${d.disease_id})`));
+
+  return Array.from(new Set(diseases.map((d) => d.disease_id)));
+}
+
+function intervalBucket(date: Date, interval: AnalyticsFilters["interval"] = "daily") {
+  const bucket = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
+  if (interval === "weekly") {
+    const day = bucket.getUTCDay() || 7;
+    bucket.setUTCDate(bucket.getUTCDate() - day + 1);
+  } else if (interval === "monthly") {
+    bucket.setUTCDate(1);
+  } else if (interval === "yearly") {
+    bucket.setUTCMonth(0, 1);
+  }
+
+  return bucket.toISOString().split("T")[0];
 }
 
 /**
@@ -257,7 +326,7 @@ export async function getPatientDemographics(filters?: AnalyticsFilters) {
   encounterRows.forEach((encounter) => {
     const district = encounter.facility.district || "Unknown";
     const region = encounter.facility.region || "Unknown";
-    const disease = encounter.disease.disease_name || "Unknown";
+    const disease = canonicalDiseaseName(encounter.disease.disease_name);
     const ageBand = ageBandFor(encounter.patient.date_of_birth);
     const sex = encounter.patient.sex || "Unknown";
 
@@ -358,6 +427,7 @@ export async function getDiseaseDistribution(filters?: AnalyticsFilters) {
   const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
 
   if (allowedDiseaseIds.length === 0) {
+    console.warn('[Analytics] No diseases found for disease distribution');
     return {
       topDiseases: [],
       regionalPrevalence: {},
@@ -380,19 +450,24 @@ export async function getDiseaseDistribution(filters?: AnalyticsFilters) {
     take: 10,
   });
 
+  console.debug(`[Analytics] Top disease counts:`, diseaseCounts.map(d => `${d.disease_id}: ${d._count}`));
+
   const diseases = await prisma.disease.findMany({
     where: {
       disease_id: { in: allowedDiseaseIds }
     }
   });
 
-  const topDiseases = diseaseCounts.map((d) => ({
-    disease:
-      diseases.find(
-        (x) => x.disease_id === d.disease_id
-      )?.disease_name || "Unknown",
-    count: d._count,
-  }));
+  const topDiseaseMap = new Map<string, number>();
+  diseaseCounts.forEach((d) => {
+    const diseaseName = canonicalDiseaseName(diseases.find((x) => x.disease_id === d.disease_id)?.disease_name);
+    topDiseaseMap.set(diseaseName, (topDiseaseMap.get(diseaseName) || 0) + d._count);
+  });
+
+  const topDiseases = Array.from(topDiseaseMap.entries())
+    .map(([disease, count]) => ({ disease, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
 
   // Regional disease prevalence
   const regionalPrevalence =
@@ -411,8 +486,7 @@ export async function getDiseaseDistribution(filters?: AnalyticsFilters) {
 
   regionalPrevalence.forEach((encounter) => {
     const region = encounter.facility.region;
-    const disease =
-      encounter.disease.disease_name;
+    const disease = canonicalDiseaseName(encounter.disease.disease_name);
 
     if (!regionMap[region]) {
       regionMap[region] = {};
@@ -544,57 +618,32 @@ export async function getOutcomeAnalytics(filters?: AnalyticsFilters) {
   console.log('[getOutcomeAnalytics] Found diseases:', diseases);
   console.log('[getOutcomeAnalytics] Outcomes by disease:', outcomesByDisease);
 
-  const diseaseMap = Object.fromEntries(
-    diseases.map(d => [d.disease_id, d.disease_name])
-  );
-
   // Build summary by disease
   const summaryByDisease: Record<string, any> = {};
+  const diseaseNameById = new Map(diseases.map((disease) => [disease.disease_id, disease.disease_name]));
 
-  for (const disease of diseases) {
-    const diseaseOutcomes = outcomesByDisease.filter(
-      o => o.disease_id === disease.disease_id
-    );
-
-    const diseaseTotal = diseaseOutcomes.reduce(
-      (sum, o) => sum + o._count,
-      0
-    );
-
-    const diseaseRecovered = diseaseOutcomes.reduce(
-      (sum, o) => sum + (outcomeCategory(o.outcome) === "recovered" ? o._count : 0),
-      0
-    );
-
-    const diseaseDeaths = diseaseOutcomes.reduce(
-      (sum, o) => sum + (outcomeCategory(o.outcome) === "deaths" ? o._count : 0),
-      0
-    );
-
-    const diseaseOngoing = diseaseOutcomes.reduce(
-      (sum, o) => sum + (outcomeCategory(o.outcome) === "ongoing" ? o._count : 0),
-      0
-    );
-
-    const diseaseUnknown = diseaseOutcomes.reduce(
-      (sum, o) => sum + (outcomeCategory(o.outcome) === "unknown" ? o._count : 0),
-      0
-    );
-
-    summaryByDisease[disease.disease_name] = {
-      total: diseaseTotal,
-      recovered: diseaseRecovered,
-      deaths: diseaseDeaths,
-      ongoing: diseaseOngoing,
-      unknown: diseaseUnknown,
-      recoveryRate: diseaseTotal > 0
-        ? Math.round((diseaseRecovered / diseaseTotal) * 100)
-        : 0,
-      mortalityRate: diseaseTotal > 0
-        ? Math.round((diseaseDeaths / diseaseTotal) * 100)
-        : 0,
+  outcomesByDisease.forEach((outcome) => {
+    const diseaseName = canonicalDiseaseName(diseaseNameById.get(outcome.disease_id));
+    const current = summaryByDisease[diseaseName] || {
+      total: 0,
+      recovered: 0,
+      deaths: 0,
+      ongoing: 0,
+      unknown: 0,
+      recoveryRate: 0,
+      mortalityRate: 0,
     };
-  }
+    const category = outcomeCategory(outcome.outcome);
+
+    current.total += outcome._count;
+    current[category as "recovered" | "deaths" | "ongoing" | "unknown"] += outcome._count;
+    summaryByDisease[diseaseName] = current;
+  });
+
+  Object.values(summaryByDisease).forEach((summary: any) => {
+    summary.recoveryRate = summary.total > 0 ? Math.round((summary.recovered / summary.total) * 100) : 0;
+    summary.mortalityRate = summary.total > 0 ? Math.round((summary.deaths / summary.total) * 100) : 0;
+  });
 
   console.log('[getOutcomeAnalytics] Summary by disease:', summaryByDisease);
 
@@ -619,6 +668,7 @@ export async function getTrendAnalysis(filters?: AnalyticsFilters) {
   const allowedDiseaseIds = await getDynamicDiseaseIds(filters);
 
   if (allowedDiseaseIds.length === 0) {
+    console.warn('[Analytics] No diseases found for trend analysis');
     return {};
   }
 
@@ -640,6 +690,8 @@ export async function getTrendAnalysis(filters?: AnalyticsFilters) {
     },
   });
 
+  console.debug(`[Analytics] Retrieved ${encounters.length} encounters for trend analysis`);
+
   // Group trends by disease
   const trendsByDisease: Record<
     string,
@@ -648,9 +700,7 @@ export async function getTrendAnalysis(filters?: AnalyticsFilters) {
 
   encounters.forEach((encounter) => {
     const diseaseName = encounter.disease.disease_name;
-    const date = new Date(encounter.date_of_diagnosis)
-      .toISOString()
-      .split("T")[0];
+    const date = intervalBucket(new Date(encounter.date_of_diagnosis), filters?.interval || "daily");
 
     if (!trendsByDisease[diseaseName]) {
       trendsByDisease[diseaseName] = [];
@@ -717,6 +767,8 @@ export async function getTrendAnalysis(filters?: AnalyticsFilters) {
       anomalies,
     };
   });
+
+  console.debug(`[Analytics] Trend summary for ${Object.keys(summaryByDisease).length} diseases`);
 
   return {
     series: normalizedTrends,
@@ -909,7 +961,7 @@ async function getOutbreakAlertDashboardData(filters?: AnalyticsFilters) {
       ? alert.severity
       : current.highestSeverity;
     current.latestAlertAt = alert.sent_at > current.latestAlertAt ? alert.sent_at : current.latestAlertAt;
-    current.diseases.add(alert.disease.disease_name);
+    current.diseases.add(canonicalDiseaseName(alert.disease.disease_name));
     affectedLocationMap.set(key, current);
   });
 
@@ -929,7 +981,7 @@ async function getMonitoringMetadata() {
   const [diseases, districts] = await Promise.all([
     prisma.disease.findMany({
       where: {
-        disease_name: { in: FOCUS_DISEASE_NAMES },
+        icd10Code: { in: FOCUS_DISEASE_CODES },
         monitoring_enabled: true,
       },
       select: {
@@ -952,7 +1004,7 @@ async function getMonitoringMetadata() {
     enabledDiseases: diseases.length,
     monitoredDiseases: diseases.map((disease) => ({
       diseaseId: disease.disease_id,
-      diseaseName: disease.disease_name,
+      diseaseName: canonicalDiseaseName(disease.disease_name),
       warningThreshold: disease.warning_threshold || 0,
       outbreakThreshold: disease.outbreak_threshold || 0,
       cooldownHours: disease.alert_cooldown_hours,
@@ -1115,7 +1167,7 @@ export async function getPatientRecords(filters?: AnalyticsFilters) {
     events.push({
       date: latestEncounter.date_of_diagnosis.toISOString().split('T')[0],
       type: 'Diagnosis',
-      description: `Initial ${latestEncounter.disease.disease_name} diagnosis`,
+      description: `Initial ${canonicalDiseaseName(latestEncounter.disease.disease_name)} diagnosis`,
     });
 
     // Add admission event if applicable
@@ -1167,7 +1219,7 @@ export async function getPatientRecords(filters?: AnalyticsFilters) {
     // Simple anomaly detection logic
     const anomaly = status === 'Treatment Failure' ||
       (latestEncounter.treatment_records.length > 3) ||
-      (age > 60 && latestEncounter.disease.disease_name === 'HIV/AIDS');
+      (age > 60 && canonicalDiseaseName(latestEncounter.disease.disease_name) === 'HIV/AIDS');
 
     let anomalyReason = '';
     if (anomaly) {
@@ -1175,7 +1227,7 @@ export async function getPatientRecords(filters?: AnalyticsFilters) {
         anomalyReason = 'Treatment failure - consider resistance testing';
       } else if (latestEncounter.treatment_records.length > 3) {
         anomalyReason = 'Multiple treatment regimens - review treatment plan';
-      } else if (age > 60 && latestEncounter.disease.disease_name === 'HIV/AIDS') {
+      } else if (age > 60 && canonicalDiseaseName(latestEncounter.disease.disease_name) === 'HIV/AIDS') {
         anomalyReason = 'Late-stage diagnosis in elderly patient';
       }
     }
@@ -1186,7 +1238,7 @@ export async function getPatientRecords(filters?: AnalyticsFilters) {
       sex: patient.sex,
       district: latestEncounter.facility.district,
       facility: latestEncounter.facility.name,
-      disease: latestEncounter.disease.disease_name,
+      disease: canonicalDiseaseName(latestEncounter.disease.disease_name),
       diagnosisDate: latestEncounter.date_of_diagnosis.toISOString().split('T')[0],
       status,
       events,

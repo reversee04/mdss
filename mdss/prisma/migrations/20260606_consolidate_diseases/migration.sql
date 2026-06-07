@@ -1,0 +1,11 @@
+-- Deprecated migration.
+--
+-- This migration previously deleted every Disease row except the simple MDSS
+-- IDs (hiv, malaria, tb, cholera). That conflicts with the canonical strategy
+-- used by hospitalAPI, where Disease rows use UUID primary keys and ICD-10
+-- codes as stable identifiers.
+--
+-- Disease consolidation is now handled by:
+-- 1. 20260607_use_icd_uuid_diseases, which adds ICD-10 support to MDSS.
+-- 2. prisma/cleanup-duplicates.ts, which rewires encounters before deleting
+--    duplicate simple-ID disease rows.

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
+const FOCUS_DISEASE_CODES = ['B20', 'B50', 'A15', 'A00'];
+const FOCUS_DISEASE_NAMES = ['HIV/AIDS', 'Malaria', 'Malaria (P. falciparum)', 'Tuberculosis', 'Cholera'];
+const FOCUS_DISEASE_SIMPLE_IDS = ['hiv', 'malaria', 'tb', 'cholera'];
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ diseaseID: string }> }
@@ -10,8 +14,27 @@ export async function PATCH(
     const diseaseId = resolvedParams.diseaseID;
     const body = await request.json();
 
-    const allowedDiseaseIds = ['hiv', 'malaria', 'tb', 'cholera'];
-    if (!allowedDiseaseIds.includes(diseaseId)) {
+    const existingDisease = await prisma.disease.findUnique({
+      where: { disease_id: diseaseId },
+      select: {
+        icd10Code: true,
+        disease_id: true,
+        disease_name: true,
+        outbreak_threshold: true,
+        warning_threshold: true,
+      },
+    });
+
+    const isFocusedDisease = Boolean(
+      existingDisease &&
+      (
+        (existingDisease.icd10Code && FOCUS_DISEASE_CODES.includes(existingDisease.icd10Code)) ||
+        FOCUS_DISEASE_NAMES.includes(existingDisease.disease_name) ||
+        FOCUS_DISEASE_SIMPLE_IDS.includes(existingDisease.disease_id)
+      )
+    );
+
+    if (!isFocusedDisease) {
       return NextResponse.json(
         { success: false, error: 'Thresholds can only be configured for focused surveillance diseases.' },
         { status: 400 }
@@ -57,11 +80,6 @@ export async function PATCH(
         .filter(Boolean);
     }
 
-    const existingDisease = await prisma.disease.findUnique({
-      where: { disease_id: diseaseId },
-      select: { outbreak_threshold: true, warning_threshold: true },
-    });
-
     const nextWarning = Number(data.warning_threshold ?? existingDisease?.warning_threshold ?? 0);
     const nextOutbreak = Number(data.outbreak_threshold ?? existingDisease?.outbreak_threshold ?? 0);
 
@@ -77,6 +95,7 @@ export async function PATCH(
       data,
       select: {
         disease_id: true,
+        icd10Code: true,
         disease_name: true,
         outbreak_threshold: true,
         warning_threshold: true,

@@ -47,7 +47,7 @@ export default function TrendsPage() {
           ...filters,
           startDate: filters.startDate ? filters.startDate.toISOString().split('T')[0] : lastMonth.toISOString().split('T')[0],
           endDate: filters.endDate ? filters.endDate.toISOString().split('T')[0] : today.toISOString().split('T')[0],
-          interval: 'daily',
+          interval: filters.timeRange || 'daily',
         }),
         getDiseases({ ...filters, limit: 10 }),
       ])
@@ -95,7 +95,8 @@ export default function TrendsPage() {
   const allValues = datasets.flatMap(d => d.data)
   const avgDaily = allValues.length > 0 ? Math.round(totalCases / allValues.length) : 0
   const peakCases = allValues.length > 0 ? Math.max(...allValues) : 0
-  const lowestCases = allValues.length > 0 ? Math.min(...(allValues.filter(v => v > 0))) : 0
+  const positiveValues = allValues.filter((value) => value > 0)
+  const lowestCases = positiveValues.length > 0 ? Math.min(...positiveValues) : 0
 
   return (
     <div className="space-y-6">
@@ -174,7 +175,7 @@ export default function TrendsPage() {
             <TabsContent value="monthly" className="space-y-4">
               <LineChart
                 title="Disease Trends Over Time"
-                description={`Individual disease trends over the selected period (${dates.length} days of data)`}
+                description={`Individual disease trends over the selected period (${dates.length} ${filters.timeRange || 'daily'} buckets)`}
                 labels={chartLabels}
                 datasets={datasets.length > 0 ? datasets : [{ label: 'No Data', data: [], borderColor: '#006cbf' }]}
               />
@@ -276,7 +277,7 @@ export default function TrendsPage() {
                             }}
                             className="text-xs font-medium"
                           >
-                            {Math.round((diseaseTotal / totalCases) * 100)}% of total
+                            {totalCases > 0 ? Math.round((diseaseTotal / totalCases) * 100) : 0}% of total
                           </Badge>
                         </div>
                       </CardContent>

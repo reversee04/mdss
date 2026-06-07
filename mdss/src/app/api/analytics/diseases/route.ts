@@ -31,6 +31,14 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
 
+    console.debug('[Diseases API] Query params:', {
+      disease: disease || 'all',
+      district: district || 'all',
+      startDate,
+      endDate,
+      limit: limit || '10'
+    });
+
     const diseases = await getDiseaseDistribution({
       region: region || undefined,
       district: district || undefined,

@@ -86,7 +86,7 @@ export default function ETLMonitoringPage() {
     setSyncing(true);
     try {
       // Trigger the sync endpoint
-      const response = await fetch('/api/sync', {
+      const response = await fetch('http://127.0.0.1:4000/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

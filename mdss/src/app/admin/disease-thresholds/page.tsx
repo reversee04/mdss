@@ -11,6 +11,7 @@ import { Activity, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 
 interface DiseaseThreshold {
   disease_id: string;
+  icd10Code: string | null;
   disease_name: string;
   outbreak_threshold: number;
   warning_threshold: number;
@@ -19,12 +20,12 @@ interface DiseaseThreshold {
   alert_cooldown_hours: number;
 }
 
-const FOCUS_DISEASES = ['hiv', 'malaria', 'tb', 'cholera'];
+const FOCUS_DISEASE_CODES = ['B20', 'B50', 'A15', 'A00'];
 const FOCUS_DISEASE_NAMES: Record<string, string> = {
-  hiv: 'HIV/AIDS',
-  malaria: 'Malaria',
-  tb: 'Tuberculosis',
-  cholera: 'Cholera',
+  B20: 'HIV/AIDS',
+  B50: 'Malaria',
+  A15: 'Tuberculosis',
+  A00: 'Cholera',
 };
 
 export default function DiseaseThresholdsPage() {
@@ -52,11 +53,11 @@ export default function DiseaseThresholdsPage() {
 
       setDiseases(
         data
-          .filter((disease: DiseaseThreshold) => FOCUS_DISEASES.includes(disease.disease_id.toLowerCase()))
+          .filter((disease: DiseaseThreshold) => disease.icd10Code && FOCUS_DISEASE_CODES.includes(disease.icd10Code))
           .sort(
             (a: DiseaseThreshold, b: DiseaseThreshold) =>
-              FOCUS_DISEASES.indexOf(a.disease_id.toLowerCase()) -
-              FOCUS_DISEASES.indexOf(b.disease_id.toLowerCase())
+              FOCUS_DISEASE_CODES.indexOf(a.icd10Code || '') -
+              FOCUS_DISEASE_CODES.indexOf(b.icd10Code || '')
           )
       );
     } catch (err) {
@@ -107,7 +108,7 @@ export default function DiseaseThresholdsPage() {
       }
 
       const monitoringResult = await triggerAlertMonitoring(diseaseId);
-      const diseaseName = FOCUS_DISEASE_NAMES[diseaseId] || diseaseId;
+      const diseaseName = diseases.find((disease) => disease.disease_id === diseaseId)?.disease_name || diseaseId;
 
       setHighlightedDisease(diseaseId);
       setSuccessMessage(
@@ -205,7 +206,7 @@ export default function DiseaseThresholdsPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <CardTitle>
-                      {FOCUS_DISEASE_NAMES[disease.disease_id.toLowerCase()] || disease.disease_name}
+                      {FOCUS_DISEASE_NAMES[disease.icd10Code || ''] || disease.disease_name}
                     </CardTitle>
                     <Badge variant={disease.monitoring_enabled ? 'default' : 'secondary'}>
                       <Activity className="mr-1 h-3 w-3" />
@@ -374,4 +375,3 @@ export default function DiseaseThresholdsPage() {
     </div>
   );
 }
-

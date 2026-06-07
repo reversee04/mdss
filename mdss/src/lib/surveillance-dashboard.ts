@@ -9,8 +9,28 @@ export type TrendSeries = Record<string, Array<{ date: string; count: number }>>
 
 export function getTrendSeries(trends: any): TrendSeries {
   if (!trends) return {};
+  // If the API returns a pre-structured series object
   if (trends.series && typeof trends.series === "object") return trends.series;
+  // If the API returns an object mapping diseases to arrays
   if (typeof trends === "object" && !Array.isArray(trends)) return trends;
+  // Handle array format (e.g., mock data)
+  if (Array.isArray(trends)) {
+    const series: TrendSeries = {};
+    trends.forEach((item: any) => {
+      const { date } = item;
+      Object.entries(item).forEach(([key, value]) => {
+        if (key === "date" || key === "month") return;
+        // Map key to disease name
+        let disease = key;
+        if (key === "hiv") disease = "HIV/AIDS";
+        else if (key === "tb") disease = "Tuberculosis";
+        else disease = key.charAt(0).toUpperCase() + key.slice(1);
+        if (!series[disease]) series[disease] = [];
+        series[disease].push({ date, count: Number(value) });
+      });
+    });
+    return series;
+  }
   return {};
 }
 
@@ -82,4 +102,3 @@ export function formatFilterSummary(filters: Record<string, any>) {
 
   return active.length > 0 ? active.join(" | ") : "All surveillance data";
 }
-

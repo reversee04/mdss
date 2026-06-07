@@ -4,7 +4,6 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 async function main() {
-  // Seed test users first
   console.log("Seeding test users...");
 
   const testUsers = [
@@ -62,7 +61,7 @@ async function main() {
 
   const diseases = [
     {
-      id: "hiv",
+      icd10Code: "B20",
       name: "HIV/AIDS",
       description: "Human Immunodeficiency Virus / Acquired Immunodeficiency Syndrome",
       outbreak_threshold: 15,
@@ -70,7 +69,7 @@ async function main() {
       alert_recipients: ["hiv-surveillance@health.gov.mw", "director-epidemiology@health.gov.mw"],
     },
     {
-      id: "malaria",
+      icd10Code: "B50",
       name: "Malaria",
       description: "Mosquito-borne infectious disease caused by Plasmodium parasites",
       outbreak_threshold: 150,
@@ -78,7 +77,7 @@ async function main() {
       alert_recipients: ["malaria-control@health.gov.mw", "vector-control@health.gov.mw"],
     },
     {
-      id: "tb",
+      icd10Code: "A15",
       name: "Tuberculosis",
       description: "Infectious bacterial disease caused by Mycobacterium tuberculosis affecting the lungs",
       outbreak_threshold: 25,
@@ -86,7 +85,7 @@ async function main() {
       alert_recipients: ["tb-surveillance@health.gov.mw", "dots-coordinator@health.gov.mw"],
     },
     {
-      id: "cholera",
+      icd10Code: "A00",
       name: "Cholera",
       description: "Acute diarrheal infection caused by ingestion of food or water contaminated with Vibrio cholerae",
       outbreak_threshold: 5,
@@ -95,52 +94,43 @@ async function main() {
     },
   ];
 
-  console.log("Seeding MDSS with 4 Focused Diseases...");
+  console.log("Seeding MDSS focused diseases with ICD-10 codes...");
 
-  // 1. Upsert focused diseases
-  for (const d of diseases) {
+  for (const disease of diseases) {
     await prisma.disease.upsert({
-      where: { disease_id: d.id },
+      where: { icd10Code: disease.icd10Code },
       update: {
-        disease_name: d.name,
-        description: d.description,
-        outbreak_threshold: d.outbreak_threshold,
-        warning_threshold: d.warning_threshold,
-        alert_recipients: d.alert_recipients,
+        disease_name: disease.name,
+        description: disease.description,
+        outbreak_threshold: disease.outbreak_threshold,
+        warning_threshold: disease.warning_threshold,
+        alert_recipients: disease.alert_recipients,
+        monitoring_enabled: true,
       },
       create: {
-        disease_id: d.id,
-        disease_name: d.name,
-        description: d.description,
-        outbreak_threshold: d.outbreak_threshold,
-        warning_threshold: d.warning_threshold,
-        alert_recipients: d.alert_recipients,
+        icd10Code: disease.icd10Code,
+        disease_name: disease.name,
+        description: disease.description,
+        outbreak_threshold: disease.outbreak_threshold,
+        warning_threshold: disease.warning_threshold,
+        alert_recipients: disease.alert_recipients,
         monitoring_enabled: true,
       },
     });
-    console.log(`- Seeded disease: ${d.name} (${d.id})`);
+    console.log(`- Seeded disease: ${disease.name} (ICD: ${disease.icd10Code})`);
   }
 
-  // 2. Clean up any other diseases not in our focused list
-  const allowedIds = diseases.map((d) => d.id);
-  const deleteCount = await prisma.disease.deleteMany({
-    where: {
-      disease_id: {
-        notIn: allowedIds,
-      },
-    },
+  const finalDiseaseCount = await prisma.disease.count({
+    where: { icd10Code: { in: diseases.map((disease) => disease.icd10Code) } },
   });
-
-  if (deleteCount.count > 0) {
-    console.log(`- Cleaned up ${deleteCount.count} unsupported disease(s) from database.`);
-  }
+  console.log(`Verified ${finalDiseaseCount} focused diseases are present`);
 
   console.log("Database seeding completed successfully!");
 }
 
 main()
-  .catch((e) => {
-    console.error("Seeding failed:", e);
+  .catch((error) => {
+    console.error("Seeding failed:", error);
     process.exit(1);
   })
   .finally(async () => {

@@ -39,11 +39,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Validate interval parameter
-    if (!["daily", "weekly", "monthly"].includes(interval)) {
+    if (!["daily", "weekly", "monthly", "yearly"].includes(interval)) {
       return NextResponse.json(
         {
           success: false,
-          error: "Invalid interval. Must be 'daily', 'weekly', or 'monthly'.",
+          error: "Invalid interval. Must be 'daily', 'weekly', 'monthly', or 'yearly'.",
         },
         { status: 400 }
       );
@@ -52,6 +52,15 @@ export async function GET(request: NextRequest) {
     const disease = searchParams.get("disease");
     const location = searchParams.get("location");
     const facility = searchParams.get("facility");
+
+    console.debug('[Trends API] Query params:', {
+      disease: disease || 'all',
+      location: location || 'all',
+      facility: facility || 'all',
+      startDate,
+      endDate,
+      interval
+    });
 
     const trends = await getTrendAnalysis({
       disease: disease || undefined,

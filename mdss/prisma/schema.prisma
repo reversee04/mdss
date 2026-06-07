@@ -49,7 +49,8 @@ model Facility {
 }
 
 model Disease {
-  disease_id   String      @id @db.VarChar(50)
+  disease_id   String      @id @default(uuid()) @db.VarChar(50)
+  icd10Code    String?     @unique @db.VarChar(10)
   disease_name String      @db.VarChar(100)
   description  String?     @db.Text
   encounters   Encounter[]

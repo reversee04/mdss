@@ -59,10 +59,13 @@ export function FilterPanel({
         const response = await fetch('/api/admin/diseases/list')
         const data = await response.json()
         if (data.success && data.data) {
+          console.debug('[FilterPanel] Loaded diseases:', data.data.map((d: any) => `${d.disease_name} (${d.disease_id})`))
           setDiseases(data.data)
+        } else {
+          console.error('[FilterPanel] Failed to load diseases:', data.error)
         }
       } catch (error) {
-        console.error('Failed to fetch diseases:', error)
+        console.error('[FilterPanel] Failed to fetch diseases:', error)
       } finally {
         setLoadingDiseases(false)
       }
@@ -80,7 +83,10 @@ export function FilterPanel({
   return (
     <div className={cn('flex flex-wrap items-center gap-3', className)}>
       {showDisease && (
-        <Select onValueChange={(value) => onFilterChange?.({ disease: value })}>
+        <Select onValueChange={(value) => {
+          console.debug('[FilterPanel] Disease filter changed:', value)
+          onFilterChange?.({ disease: value })
+        }}>
           <SelectTrigger className="w-[160px]">
             <SelectValue placeholder={loadingDiseases ? "Loading..." : "All Diseases"} />
           </SelectTrigger>
